@@ -1,11 +1,26 @@
 #!/bin/bash
 #
-# Executable entry point - Bash version
+# Executable entry point - Bash version (cross-platform)
 #
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
+
+# Detect OS and set Python command
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows (Git Bash, MSYS2, Cygwin)
+    PYTHON_CMD="python"
+elif command -v python3 &> /dev/null; then
+    # macOS/Linux with python3
+    PYTHON_CMD="python3"
+elif command -v python &> /dev/null; then
+    # Fallback to python
+    PYTHON_CMD="python"
+else
+    echo "Error: Python not found. Please install Python 3.7 or higher." >&2
+    exit 1
+fi
 
 # Function to show usage
 show_usage() {
@@ -20,7 +35,7 @@ show_usage() {
 # Function to install dependencies
 install_deps() {
     echo "Installing dependencies..."
-    if python3 -m pip install -r "$PROJECT_ROOT/requirements.txt"; then
+    if $PYTHON_CMD -m pip install -r "$PROJECT_ROOT/requirements.txt"; then
         echo "Dependencies installed successfully."
         exit 0
     else
@@ -34,89 +49,74 @@ run_tests() {
     echo "Running test suite..."
     cd "$PROJECT_ROOT"
     
-    # Validate environment variables at startup (consistent with CLI command)
-    if ! python3 -c "
+    # Use Python to run tests and get reliable cross-platform results
+    $PYTHON_CMD -c "
 import sys
+import subprocess
+import re
+import os
+
 sys.path.insert(0, '.')
-from src.cli import _validate_environment
-_validate_environment()
-"; then
-        echo "Environment validation failed" >&2
-        exit 1
-    fi
-    
-    # Run pytest with coverage and capture output
-    echo "Running pytest with coverage..."
-    if ! pytest_output=$(python3 -m pytest --cov=src --cov-report=term-missing --tb=short 2>&1); then
-        pytest_exit_code=$?
-    else
-        pytest_exit_code=0
-    fi
-    
-    # Parse test results
-    test_summary=""
-    coverage_summary=""
-    passed=0
-    failed=0
-    errors=0
-    total=0
-    coverage=0
-    
-    # Look for test summary line
-    while IFS= read -r line; do
-        # Look for test summary - handle different pytest output formats
-        if [[ ("$line" == *"passed"* && ("$line" == *"failed"* || "$line" == *"error"*)) || "$line" == *"test session starts"* ]]; then
-            test_summary="$line"
-        elif [[ "$line" == *"TOTAL"* && "$line" == *"%"* ]]; then
-            # Extract coverage percentage
-            for part in $line; do
-                if [[ "$part" == *"%" ]]; then
-                    coverage_summary="${part%\%}"
-                    break
-                fi
-            done
-        fi
-    done <<< "$pytest_output"
-    
-    # Parse numbers from pytest output using grep and regex
-    if [[ -n "$test_summary" ]]; then
-        # Try multiple patterns to match different pytest output formats
-        passed=$(echo "$test_summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "0")
-        failed=$(echo "$test_summary" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo "0")
-        errors=$(echo "$test_summary" | grep -oE '[0-9]+ error' | grep -oE '[0-9]+' || echo "0")
+
+# Validate environment
+try:
+    from src.cli import _validate_environment
+    _validate_environment()
+except Exception as e:
+    print(f'Environment validation failed: {e}', file=sys.stderr)
+    sys.exit(1)
+
+# Run pytest with coverage
+print('Running pytest with coverage...', flush=True)
+result = subprocess.run(
+    [sys.executable, '-m', 'pytest', '--cov=src', '--cov-report=term-missing', '--tb=short'],
+    capture_output=True,
+    text=True
+)
+
+output = result.stdout + result.stderr
+
+# Print full output for debugging
+print(output, flush=True)
+
+# Parse test results
+passed = failed = errors = 0
+coverage_pct = 0
+
+# Extract test counts
+for line in output.split('\n'):
+    # Look for pytest summary line (e.g., '134 passed, 10 failed in 5.23s')
+    if 'passed' in line or 'failed' in line or 'error' in line:
+        passed_match = re.search(r'(\d+)\s+passed', line)
+        failed_match = re.search(r'(\d+)\s+failed', line)
+        error_match = re.search(r'(\d+)\s+error', line)
         
-        # Also try to find test counts in other formats
-        if [[ "$passed" == "0" ]]; then
-            passed=$(echo "$pytest_output" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || echo "0")
-        fi
-        if [[ "$failed" == "0" ]]; then
-            failed=$(echo "$pytest_output" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' | head -1 || echo "0")
-        fi
-        if [[ "$errors" == "0" ]]; then
-            errors=$(echo "$pytest_output" | grep -oE '[0-9]+ error' | grep -oE '[0-9]+' | head -1 || echo "0")
-        fi
-        
-        # Convert to integers
-        passed=$((passed))
-        failed=$((failed))
-        errors=$((errors))
-        total=$((passed + failed + errors))
-    fi
+        if passed_match:
+            passed = int(passed_match.group(1))
+        if failed_match:
+            failed = int(failed_match.group(1))
+        if error_match:
+            errors = int(error_match.group(1))
     
-    # Format coverage as integer
-    if [[ -n "$coverage_summary" ]]; then
-        coverage=$(printf "%.0f" "$coverage_summary")
-    fi
-    
-    # Format output as required
-    echo "${passed}/${total} test cases passed. ${coverage}% line coverage achieved."
-    
-    # Exit with error if tests failed OR coverage < 80%
-    if [[ $pytest_exit_code -ne 0 || $coverage -lt 80 ]]; then
-        exit 1
-    else
-        exit 0
-    fi
+    # Extract coverage percentage from TOTAL line
+    if 'TOTAL' in line and '%' in line:
+        # Match percentage in coverage output (e.g., 'TOTAL  1234  567  123  45%')
+        pct_match = re.search(r'(\d+)%', line)
+        if pct_match:
+            coverage_pct = int(pct_match.group(1))
+
+total = passed + failed + errors
+
+# Print formatted output
+print(f'{passed}/{total} test cases passed. {coverage_pct}% line coverage achieved.')
+
+# Exit with appropriate code
+if result.returncode != 0 or coverage_pct < 80:
+    sys.exit(1)
+else:
+    sys.exit(0)
+"
+    exit $?
 }
 
 # Function to process URLs
@@ -135,7 +135,7 @@ process_urls() {
     cd "$PROJECT_ROOT"
     
     # Run Python script - stdout contains only JSON, stderr goes to log file
-    if python3 -c "
+    if $PYTHON_CMD -c "
 import sys
 sys.path.insert(0, '.')
 from src.cli import _validate_environment, process_urls
