@@ -12,6 +12,7 @@ from .metrics.dataset_quality import DatasetQualityMetric
 from .metrics.license_score import LicenseScoreMetric
 from .metrics.performance_claims import PerformanceClaimsMetric
 from .metrics.ramp_up import RampUpTimeMetric
+from .metrics.Reproducibility import ReproducibilityMetric
 from .metrics.size_score import SizeScoreMetric
 from .models import AuditResult, MetricResult, ModelContext, SizeScore
 from .utils import measure_time
@@ -34,6 +35,7 @@ class MetricScorer:
             DatasetAndCodeScoreMetric(),
             DatasetQualityMetric(),
             CodeQualityMetric(),
+            ReproducibilityMetric(),
         ]
         self.hf_api = HuggingFaceAPI() #hf client for enhancing
 
@@ -63,6 +65,9 @@ class MetricScorer:
                 "dataset_and_code_score": 0.15,
                 "dataset_quality": 0.10,
                 "code_quality": 0.10,
+                "reproducibility": 0.10,
+                "reviewedness": 0.0,  # Not implemented yet
+                "treescore": 0.0,  # Not implemented yet
             },
             "thresholds": {
                 "size_limits": {
@@ -117,6 +122,12 @@ class MetricScorer:
             dataset_quality_latency=metric_results["dataset_quality"].latency,
             code_quality=metric_results["code_quality"].score,
             code_quality_latency=metric_results["code_quality"].latency,
+            reproducibility=metric_results.get("reproducibility", MetricResult(score=0.0, latency=0)).score,
+            reproducibility_latency=metric_results.get("reproducibility", MetricResult(score=0.0, latency=0)).latency,
+            reviewedness=0.0,  # Placeholder for now (not implemented yet)
+            reviewedness_latency=0,
+            treescore=0.0,  # Placeholder for now (not implemented yet)
+            treescore_latency=0,
         )
 
     async def _enrich_context(self, context: ModelContext):
