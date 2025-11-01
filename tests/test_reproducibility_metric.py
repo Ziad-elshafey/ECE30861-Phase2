@@ -10,7 +10,7 @@ Tests cover:
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from src.metrics.Reproducibility import ReproducibilityMetric
 from src.models import ModelContext, ParsedURL, URLCategory
 

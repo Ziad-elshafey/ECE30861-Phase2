@@ -22,7 +22,6 @@ import subprocess
 import tempfile
 import os
 import sys
-import platform
 from typing import Any, Dict, List
 
 from .base import BaseMetric
@@ -32,6 +31,8 @@ from ..utils import measure_time
 logger = logging.getLogger(__name__)
 
 # Dangerous operations to block
+# Note: Shell-specific patterns (>, |, &&, ;, `, $() ) are removed to avoid
+# false positives with legitimate Python syntax (comparison operators, bitwise ops, etc.)
 DANGEROUS_PATTERNS = [
     r'os\.system',           # System commands
     r'subprocess\.',         # Subprocess calls
@@ -42,14 +43,8 @@ DANGEROUS_PATTERNS = [
     r'requests\.',           # Network calls
     r'urllib\.',             # Network calls
     r'socket\.',             # Network sockets
-    r'rm\s+-',               # Remove files
-    r'rm\s+/',               # Remove files
-    r'>',                    # Shell redirection
-    r'\|',                   # Shell piping
-    r'&&',                   # Command chaining
-    r';',                    # Command separator
-    r'`',                    # Command substitution
-    r'\$\(',                 # Command substitution
+    r'rm\s+-',               # Remove files (shell command)
+    r'rm\s+/',               # Remove files (shell command)
 ]
 
 # Allowed imports for safe execution
@@ -233,10 +228,11 @@ class ReproducibilityMetric(BaseMetric):
             f"Matched patterns: {', '.join(matched_patterns)}"
         )
         
-        # Log code snippet for investigation (limit size)
+        # Log code snippet for investigation (limit size and sanitize)
         code_preview = code[:200] + '...' if len(code) > 200 else code
+        # Sanitize code preview to prevent log injection
         logger.debug(
-            f"Unsafe code preview: {code_preview}"
+            f"Unsafe code preview: {repr(code_preview)}"
         )
 
     def _extract_code_blocks(self, content: str) -> List[str]:
@@ -528,7 +524,12 @@ except Exception as e:
         for imp in safe_imports:
             # Extract the module name to check
             module_name = imp.split()[-1].split('.')[0]
-            if module_name not in fixed_code and 'import' not in fixed_code:
+            # Use regex to check for actual import statements for the module
+            import_pattern = re.compile(
+                rf'^\s*(import|from)\s+{re.escape(module_name)}\b',
+                re.MULTILINE
+            )
+            if not import_pattern.search(fixed_code):
                 fixed_code = f"{imp}\n{fixed_code}"
         
         # SAFE: Replace model ID placeholders

@@ -101,6 +101,9 @@ class MetricScorer:
             )
 
         #assemble flat audit record 
+        # Extract default MetricResult for reproducibility to avoid duplication
+        reproducibility_default = MetricResult(score=0.0, latency=0)
+        
         return AuditResult(
             name=context.model_url.name,
             category="MODEL",
@@ -122,8 +125,8 @@ class MetricScorer:
             dataset_quality_latency=metric_results["dataset_quality"].latency,
             code_quality=metric_results["code_quality"].score,
             code_quality_latency=metric_results["code_quality"].latency,
-            reproducibility=metric_results.get("reproducibility", MetricResult(score=0.0, latency=0)).score,
-            reproducibility_latency=metric_results.get("reproducibility", MetricResult(score=0.0, latency=0)).latency,
+            reproducibility=metric_results.get("reproducibility", reproducibility_default).score,
+            reproducibility_latency=metric_results.get("reproducibility", reproducibility_default).latency,
             reviewedness=0.0,  # Placeholder for now (not implemented yet)
             reviewedness_latency=0,
             treescore=0.0,  # Placeholder for now (not implemented yet)

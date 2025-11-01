@@ -1,36 +1,22 @@
 """Utility modules for the ML Registry."""
 
-# Import from utils module file (not the package)
-import sys
-import os
+# Import utility functions from sibling utils.py module
+# Note: Using importlib to avoid package name collision with utils/ directory
+import importlib.util
+from pathlib import Path
 
-# Add parent directory to path to import from utils.py file
-_parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _parent_dir not in sys.path:
-    sys.path.insert(0, _parent_dir)
+# Load utils.py file directly
+_utils_file = Path(__file__).parent.parent / 'utils.py'
+_spec = importlib.util.spec_from_file_location("_src_utils", _utils_file)
+_utils_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_utils_module)
 
-# Import utility functions from src.utils module (the .py file)
-# We need to import from the module file, not this package
-try:
-    # Try importing from the utils.py file in the parent src directory
-    import importlib.util
-    utils_file_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        'utils.py'
-    )
-    spec = importlib.util.spec_from_file_location("_utils_module", utils_file_path)
-    _utils_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(_utils_module)
-    
-    # Re-export functions from utils.py
-    measure_time = _utils_module.measure_time
-    extract_model_size_from_text = _utils_module.extract_model_size_from_text
-    parse_license_from_readme = _utils_module.parse_license_from_readme
-    check_readme_sections = _utils_module.check_readme_sections
-    extract_performance_claims = _utils_module.extract_performance_claims
-except Exception as e:
-    # Fallback: if the above fails, just raise
-    raise ImportError(f"Failed to import utils functions: {e}")
+# Re-export functions from utils.py
+measure_time = _utils_module.measure_time
+extract_model_size_from_text = _utils_module.extract_model_size_from_text
+parse_license_from_readme = _utils_module.parse_license_from_readme
+check_readme_sections = _utils_module.check_readme_sections
+extract_performance_claims = _utils_module.extract_performance_claims
 
 # Import exceptions from this package
 from .exceptions import (
