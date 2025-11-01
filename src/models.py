@@ -69,6 +69,15 @@ class AuditResult(BaseModel):
     code_quality: float = Field(..., ge=0.0, le=1.0)
     code_quality_latency: int = Field(..., ge=0)
 
+    reproducibility: float = Field(..., ge=0.0, le=1.0)
+    reproducibility_latency: int = Field(..., ge=0)
+
+    reviewedness: float = Field(default=0.0, ge=-1.0, le=1.0)
+    reviewedness_latency: int = Field(default=0, ge=0)
+
+    treescore: float = Field(default=0.0, ge=0.0, le=1.0)
+    treescore_latency: int = Field(default=0, ge=0)
+
 
 class ModelContext(BaseModel):
     # context for a model including associated datasets and code
