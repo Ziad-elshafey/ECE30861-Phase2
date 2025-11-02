@@ -108,3 +108,5 @@ Automated testing pipeline runs on every push:
 
 **See**: [Database Documentation](src/database/README.md)
 
+
+🚀 Triggering first Docker build
