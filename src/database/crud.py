@@ -212,6 +212,16 @@ def list_packages(
     return query.offset(skip).limit(limit).all()
 
 
+def get_packages(
+    db: Session,
+    skip: int = 0,
+    limit: int = 100,
+    name_filter: Optional[str] = None
+) -> List[Package]:
+    """Get packages with optional filtering and pagination (alias for list_packages)."""
+    return list_packages(db, skip=skip, limit=limit, name_filter=name_filter)
+
+
 def delete_package(db: Session, package_id: int) -> bool:
     """Delete a package by ID."""
     package = db.query(Package).filter(Package.id == package_id).first()

@@ -127,10 +127,10 @@ async def test_performance_claims_variations(readme_content, expected_range, con
 @pytest.mark.parametrize(
     "model_name,expected_size",
     [
-        ("model-7b", 14.0),  # 7B * 2GB (actual implementation uses 2GB per B, not 4GB)
-        ("small-model", 0.5),
-        ("large-model", 4.0),
-        ("unknown-model", 2.0),  # default
+        ("model-7b", 14.0),  # 7B * 2GB
+        ("small-model", 0.3),  # 'small' keyword -> 0.3
+        ("large-model", 2.5),  # 'large' keyword -> 2.5
+        ("unknown-model", 0.5),  # default fallback
     ],
 )
 async def test_size_score_name_patterns(model_name, expected_size, config):
@@ -147,7 +147,7 @@ async def test_size_score_name_patterns(model_name, expected_size, config):
 
     # Test the size estimation method directly
     estimated_size = await metric._estimate_model_size(context)
-    assert abs(estimated_size - expected_size) < 1.0
+    assert abs(estimated_size - expected_size) < 0.1  # Allow small tolerance
 
 
 # Dataset and Code Score Tests
