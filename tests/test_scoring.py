@@ -47,14 +47,14 @@ def test_scorer_init_with_config(temp_config):
     scorer = MetricScorer(temp_config)
 
     assert scorer.config["metric_weights"]["ramp_up_time"] == 0.2
-    assert len(scorer.metrics) == 8  # all 8 metrics
+    assert len(scorer.metrics) == 9  # Phase 1: 8 metrics + Phase 2: 1 reproducibility = 9
 
 
 def test_scorer_init_no_config():
     scorer = MetricScorer("nonexistent.yaml")
 
     assert "metric_weights" in scorer.config
-    assert len(scorer.metrics) == 8
+    assert len(scorer.metrics) == 9  # Phase 1: 8 metrics + Phase 2: 1 reproducibility = 9
 
 
 @patch("src.scoring.HuggingFaceAPI")
