@@ -12,7 +12,9 @@ Automated testing pipeline using GitHub Actions that runs on every push to the r
 
 **File**: `.github/workflows/ci.yml`
 
-**Trigger**: Runs automatically on every `push` to any branch
+**Triggers**: 
+- ✅ Every **pull request** on any branch
+- ✅ Every **push** to any branch
 
 **Environment**: Ubuntu Latest with Python 3.11
 
