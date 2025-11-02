@@ -1,8 +1,9 @@
 # ECE30861 - ML Model Registry
 
-[![CI Pipeline](https://github.com/Ziad-elshafey/ECE30861-Phase2/actions/workflows/ci.yml/badge.svg)](https://github.com/Ziad-elshafey/ECE30861-Phase2/actions/workflows/ci.yml)
+[![CI/CD Pipeline](https://github.com/Ziad-elshafey/ECE30861-Phase2/actions/workflows/cicd.yml/badge.svg)](https://github.com/Ziad-elshafey/ECE30861-Phase2/actions/workflows/cicd.yml)
 [![Coverage](https://img.shields.io/badge/coverage-79%25-brightgreen.svg)](https://github.com/Ziad-elshafey/ECE30861-Phase2)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![Deployment](https://img.shields.io/badge/deployment-AWS%20App%20Runner-orange.svg)](https://vmqqvhwppq.us-east-1.awsapprunner.com/)
 
 ## Team
 
@@ -76,15 +77,22 @@ Run test with sample urls.
 ## CI/CD
 
 ### ✅ Continuous Integration (CI)
-Automated testing pipeline runs on every push:
-- **Type Checking**: MyPy static analysis
+Automated testing pipeline runs on every push and pull request:
 - **Test Suite**: 218 tests with 79% coverage
+- **Type Checking**: MyPy static analysis
 - **Fast Feedback**: ~2-3 minute runtime
 
-**See**: [CI Documentation](docs/CI.md) | [Week 1 Deliverable](DELIVERABLE_CI.md)
-
 ### 🚀 Continuous Deployment (CD)
-*Coming in Week 2: Automated deployment to AWS*
+Automated deployment to AWS on merge to main:
+- **Docker**: Containerized FastAPI application
+- **AWS ECR**: Container registry for Docker images
+- **AWS App Runner**: Serverless deployment (0.25 vCPU, 0.5GB RAM)
+- **Auto-Deploy**: Triggered on push to main branch
+- **Live API**: https://vmqqvhwppq.us-east-1.awsapprunner.com/
+
+**Cost**: ~$10/month (~$15 for 1.5 months) ✅ Well under $100 budget
+
+**See**: [Complete CI/CD Guide](docs/CI_CD_GUIDE.md)
 
 ## Phase 2 Features
 
@@ -107,6 +115,3 @@ Automated testing pipeline runs on every push:
 - **Audit Trail**: Download history tracking
 
 **See**: [Database Documentation](src/database/README.md)
-
-
-🚀 Triggering first Docker build
