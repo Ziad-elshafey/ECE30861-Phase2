@@ -1,8 +1,8 @@
 # ECE30861 - ML Model Registry
 
-[![CI - Automated Testing Pipeline](https://github.com/Ziad-elshafey/ECE30861-Phase2/actions/workflows/ci.yml/badge.svg)](https://github.com/Ziad-elshafey/ECE30861-Phase2/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen.svg)](https://github.com/Ziad-elshafey/ECE30861-Phase2)
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/downloads/)
+[![CI Pipeline](https://github.com/Ziad-elshafey/ECE30861-Phase2/actions/workflows/ci.yml/badge.svg)](https://github.com/Ziad-elshafey/ECE30861-Phase2/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-79%25-brightgreen.svg)](https://github.com/Ziad-elshafey/ECE30861-Phase2)
+[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 
 ## Team
 
@@ -73,24 +73,18 @@ Run test with sample urls.
 ./run test sample_urls.txt
 ```
 
-## CI/CD Pipeline
+## CI/CD
 
-### Continuous Integration (CI)
-Our automated CI pipeline runs on every pull request and includes:
-- ✅ **Code Quality Checks**: Linting, formatting, type checking
-- ✅ **Unit Tests**: Comprehensive test suite across Python 3.10, 3.11, 3.12
-- ✅ **Database Tests**: Schema validation and CRUD operations
-- ✅ **API Tests**: REST endpoint validation
-- ✅ **Security Scanning**: Dependency and code security checks
-- ✅ **Coverage Reports**: Minimum 70% code coverage required
+### ✅ Continuous Integration (CI)
+Automated testing pipeline runs on every push:
+- **Type Checking**: MyPy static analysis
+- **Test Suite**: 218 tests with 79% coverage
+- **Fast Feedback**: ~2-3 minute runtime
 
-**Documentation**:
-- [Full CI/CD Documentation](docs/CI_CD_DOCUMENTATION.md)
-- [CI Demo Guide](docs/CI_DEMO_GUIDE.md)
-- [CI Status & Badges](docs/CI_STATUS.md)
+**See**: [CI Documentation](docs/CI.md) | [Week 1 Deliverable](DELIVERABLE_CI.md)
 
-### Continuous Deployment (CD)
-*Coming soon: Automated deployment to AWS*
+### 🚀 Continuous Deployment (CD)
+*Coming in Week 2: Automated deployment to AWS*
 
 ## Phase 2 Features
 
