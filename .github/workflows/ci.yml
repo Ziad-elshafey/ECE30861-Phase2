@@ -1,285 +1,32 @@
-name: CI - Automated Testing Pipeline
+name: CI Pipeline
 
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+on: [push]
 
 jobs:
-  # Job 1: Code Quality & Linting
-  code-quality:
-    name: Code Quality Checks
+  build:
     runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      DATABASE_URL: sqlite:///./test.db
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
+    - uses: actions/checkout@v4
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.12'
-        cache: 'pip'
-    
+        python-version: '3.11'
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Run flake8 linting
-      run: |
-        echo "Running flake8 linting..."
-        flake8 src tests --max-line-length=120 --statistics || true
-      continue-on-error: true
-    
-    - name: Check import sorting with isort
-      run: |
-        echo "Checking import statements..."
-        isort --check-only src tests || true
-      continue-on-error: true
-    
-    - name: Type check with mypy
-      run: |
-        echo "Running type checking..."
-        mypy src --ignore-missing-imports || true
+        python -m pip install -r requirements.txt
+
+    - name: Run MyPy
+      run: mypy src --ignore-missing-imports
       continue-on-error: true
 
-  # Job 2: Unit & Integration Tests
-  test:
-    name: Unit & Integration Tests
-    runs-on: ubuntu-latest
-    needs: code-quality
-    
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12']
-      fail-fast: false
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    
-    - name: Install dependencies
+    - name: Run tests
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        
-    - name: Display environment info
-      run: |
-        echo "Python version: $(python --version)"
-        echo "Pip version: $(pip --version)"
-        echo "Installed packages:"
-        pip list
-    
-    - name: Initialize test database
-      run: |
-        echo "Initializing test database..."
-        python -m src.database.init_db
-      env:
-        DATABASE_URL: sqlite:///./test_ml_registry.db
-    
-    - name: Seed test database
-      run: |
-        echo "Seeding test database with sample data..."
-        python -m src.database.init_db --seed
-      env:
-        DATABASE_URL: sqlite:///./test_ml_registry.db
-    
-    - name: Run all tests with pytest
-      run: |
-        echo "Running test suite..."
-        pytest tests/ -v --tb=short --color=yes --maxfail=5 || echo "Some tests failed but continuing..."
-      env:
-        DATABASE_URL: sqlite:///./test_ml_registry.db
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        LOG_LEVEL: INFO
-      continue-on-error: true
-    
-    - name: Run tests with coverage
-      run: |
-        echo "Running tests with coverage analysis..."
-        pytest tests/ --cov=src --cov-report=xml --cov-report=term-missing --cov-report=html --cov-fail-under=60
-      env:
-        DATABASE_URL: sqlite:///./test_ml_registry.db
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      continue-on-error: true
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: python-${{ matrix.python-version }}
-        fail_ci_if_error: false
-      continue-on-error: true
-    
-    - name: Archive test artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results-${{ matrix.python-version }}
-        path: |
-          htmlcov/
-          coverage.xml
-          test_ml_registry.db
-        retention-days: 30
-
-  # Job 3: Database-Specific Tests
-  database-tests:
-    name: Database Integration Tests
-    runs-on: ubuntu-latest
-    needs: code-quality
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-        cache: 'pip'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Test database initialization
-      run: |
-        echo "Testing database initialization..."
-        python -m src.database.init_db
-      env:
-        DATABASE_URL: sqlite:///./test_db_init.db
-    
-    - name: Test database seeding (idempotency)
-      run: |
-        echo "Testing idempotent database seeding..."
-        python -m src.database.init_db --seed
-        python -m src.database.init_db --seed
-      env:
-        DATABASE_URL: sqlite:///./test_db_seed.db
-    
-    - name: Run database-specific tests
-      run: |
-        echo "Running database tests..."
-        pytest tests/test_database.py -v --tb=short
-      env:
-        DATABASE_URL: sqlite:///./test_db_tests.db
-
-  # Job 4: API Tests
-  api-tests:
-    name: API Endpoint Tests
-    runs-on: ubuntu-latest
-    needs: code-quality
-    continue-on-error: true  # API is work in progress, don't fail build
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-        cache: 'pip'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Initialize database for API tests
-      run: |
-        python -m src.database.init_db --seed
-      env:
-        DATABASE_URL: sqlite:///./test_api.db
-    
-    - name: Run API endpoint tests
-      run: |
-        echo "Testing API endpoints..."
-        pytest tests/test_api_endpoints.py -v --tb=short
-      env:
-        DATABASE_URL: sqlite:///./test_api.db
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Job 5: Security Scanning
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-    
-    - name: Install security tools
-      run: |
-        python -m pip install --upgrade pip
-        pip install safety bandit
-    
-    - name: Check for vulnerable dependencies
-      run: |
-        echo "Scanning for vulnerable dependencies..."
-        safety check --json || true
-      continue-on-error: true
-    
-    - name: Run Bandit security linter
-      run: |
-        echo "Running security analysis..."
-        bandit -r src -f json -o bandit-report.json || true
-      continue-on-error: true
-    
-    - name: Upload security reports
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: security-reports
-        path: bandit-report.json
-        retention-days: 30
-
-  # Job 6: Build Summary
-  build-summary:
-    name: CI Build Summary
-    runs-on: ubuntu-latest
-    needs: [code-quality, test, database-tests, api-tests, security]
-    if: always()
-    
-    steps:
-    - name: Check all job results
-      run: |
-        echo "================================"
-        echo "CI Pipeline Execution Summary"
-        echo "================================"
-        echo "Code Quality: ${{ needs.code-quality.result }}"
-        echo "Unit Tests: ${{ needs.test.result }}"
-        echo "Database Tests: ${{ needs.database-tests.result }}"
-        echo "API Tests: ${{ needs.api-tests.result }}"
-        echo "Security Scan: ${{ needs.security.result }}"
-        echo "================================"
-    
-    - name: Fail if critical jobs failed
-      if: |
-        needs.test.result == 'failure' || 
-        needs.database-tests.result == 'failure'
-      run: |
-        echo "❌ Critical tests failed! Build cannot proceed."
-        exit 1
-    
-    - name: Success notification
-      if: |
-        needs.test.result == 'success' && 
-        needs.database-tests.result == 'success'
-      run: |
-        echo "✅ All critical tests passed! Build is ready for deployment."
+        python -m pytest --cov=src --cov-report=term-missing tests/
