@@ -3,6 +3,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
+import uuid
+from pathlib import Path
+import zipfile
+import tempfile
+import shutil
+import httpx
 
 from src.api.schemas import (
     PackageCreate,
@@ -13,8 +20,176 @@ from src.api.dependencies import get_db, get_current_user, get_optional_user
 from src.database import crud
 from src.database.models import User
 from src.utils.exceptions import PackageNotFoundError
+from src.ingest import validate_and_ingest
+from src.hf_api import HuggingFaceAPI
+from src.storage import LocalStorageBackend
 
 router = APIRouter()
+
+
+# Request/Response schemas for ingest
+class IngestRequest(BaseModel):
+    """Request to ingest a HuggingFace model."""
+    url: str  # Full HuggingFace URL or model name
+
+
+class IngestResponse(BaseModel):
+    """Response from ingest validation."""
+    status: int  # 201 if passes, 424 if fails
+    message: str
+    model_name: Optional[str] = None
+    artifact_id: Optional[str] = None
+    is_ingestible: bool
+    all_scores: Optional[dict] = None
+    failing_metrics: Optional[list] = None
+    latency_ms: Optional[int] = None
+
+
+@router.post(
+    "/ingest",
+    response_model=IngestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ingest_model(
+    request: IngestRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Ingest a public HuggingFace model.
+
+    Model must score >= 0.5 on all quality metrics to be ingestible.
+
+    Args:
+        request: Ingest request with HuggingFace model URL
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        IngestResponse with status 201 if passes, 424 if fails
+
+    Raises:
+        HTTPException: 424 if model fails quality gate
+        HTTPException: 400 if invalid URL
+    """
+    try:
+        # Parse model name from URL
+        model_name = request.url.strip("/").split("/")[-2:]
+        model_name = "/".join(model_name) if len(model_name) == 2 else model_name[0]
+
+        # Validate model against quality gate
+        passes_gate, validation_result = await validate_and_ingest(
+            model_name
+        )
+
+        if not passes_gate:
+            # Quality gate failed - return 424
+            return IngestResponse(
+                status=424,
+                message="Artifact ingest rejected: quality gate failed",
+                model_name=model_name,
+                is_ingestible=False,
+                all_scores=validation_result.get("all_scores"),
+                failing_metrics=validation_result.get("failing_metrics"),
+                latency_ms=validation_result.get("latency_ms"),
+            )
+
+        # Quality gate passed - download and store the model
+        artifact_id = str(uuid.uuid4())
+        hf_api = HuggingFaceAPI()
+        storage = LocalStorageBackend()
+
+        # Create temp directory for download
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            # Download model files from HuggingFace
+            try:
+                model_data = hf_api.fetch_model(model_name)
+                model_files = model_data.get("siblings", [])
+
+                # Download each file
+                for file_info in model_files[:10]:  # Limit to 10 files for MVP
+                    filename = file_info.get("rfilename", "")
+                    if filename:
+                        file_url = (
+                            f"https://huggingface.co/{model_name}/"
+                            f"resolve/main/{filename}"
+                        )
+                        # Simple download (production: use streaming)
+                        response = httpx.get(
+                            file_url, follow_redirects=True
+                        )
+                        if response.status_code == 200:
+                            file_path = temp_path / filename
+                            file_path.parent.mkdir(
+                                parents=True, exist_ok=True
+                            )
+                            file_path.write_bytes(response.content)
+
+            except Exception:
+                # If download fails, still register but without files
+                pass
+
+            # Create ZIP archive
+            zip_path = temp_path / f"{artifact_id}.zip"
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for file_path in temp_path.rglob("*"):
+                    if file_path != zip_path and file_path.is_file():
+                        arcname = file_path.relative_to(temp_path)
+                        zipf.write(file_path, arcname)
+
+            # Store artifact
+            metadata = {
+                "model_name": model_name,
+                "source": "huggingface",
+                "scores": validation_result.get("all_scores"),
+                "uploaded_by": current_user.username,
+            }
+
+            storage.store_artifact(
+                artifact_id=artifact_id,
+                artifact_path=str(zip_path),
+                metadata=metadata
+            )
+
+        # Register in database
+        artifact_file_path = storage.models_path / f"{artifact_id}.zip"
+        file_size = artifact_file_path.stat().st_size if artifact_file_path.exists() else 0
+
+        db_package = crud.create_package(
+            db,
+            name=model_name,
+            version="1.0.0",  # Default version for ingested models
+            s3_key=f"{artifact_id}.zip",
+            s3_bucket="local",
+            file_size_bytes=file_size,
+            description=f"Ingested from HuggingFace: {model_name}",
+            uploaded_by=current_user.id,
+        )
+
+        db.commit()
+
+        return IngestResponse(
+            status=201,
+            message="Artifact successfully ingested",
+            model_name=model_name,
+            artifact_id=artifact_id,
+            is_ingestible=True,
+            all_scores=validation_result.get("all_scores"),
+            latency_ms=validation_result.get("latency_ms"),
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid model URL: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error during ingest: {str(e)}",
+        )
 
 
 @router.post("", response_model=PackageResponse, status_code=status.HTTP_201_CREATED)

@@ -18,6 +18,7 @@ from .crud import (
     create_package,
     create_or_update_package_score,
 )
+from src.auth.password_hash import hash_password
 
 
 def seed_database():
@@ -32,7 +33,7 @@ def seed_database():
             db=db,
             username="admin",
             email="admin@example.com",
-            hashed_password="$2b$12$dummy_hashed_password",  # This should be bcrypt hashed
+            hashed_password=hash_password("admin123"),
             is_admin=True
         )
         print(f"✓ Created admin user: {admin_user.username}")
@@ -56,7 +57,7 @@ def seed_database():
             db=db,
             username="testuser",
             email="testuser@example.com",
-            hashed_password="$2b$12$dummy_hashed_password",
+            hashed_password=hash_password("password123"),
             is_admin=False
         )
         print(f"✓ Created test user: {user.username}")
@@ -117,8 +118,8 @@ def seed_database():
         print("\n✅ Database seeded successfully!")
         print("\nSample credentials:")
         print("  Admin: username='admin', password='admin123'")
-        print("  User:  username='testuser', password='test123'")
-        print("\nNote: Passwords shown here are not hashed. Use proper bcrypt hashing in production!")
+        print("  User:  username='testuser', password='password123'")
+        print("\nNote: Use these credentials for testing only!")
         
     except Exception as e:
         print(f"❌ Error seeding database: {e}")
