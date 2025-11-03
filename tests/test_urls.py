@@ -49,7 +49,7 @@ def test_parse_unknown_url():
     url = "https://example.com/some/model"
     parsed = parse_url(url)
 
-    assert parsed.category == URLCategory.MODEL
+    assert parsed.category == URLCategory.DATASET  # Unknown URLs default to DATASET
     assert parsed.platform == "unknown"
     assert parsed.name == "model"
 

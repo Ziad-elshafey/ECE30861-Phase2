@@ -79,8 +79,14 @@ async def test_hf_api_repository_not_found():
 
     with patch.object(api.api, "model_info") as mock_model_info:
         from huggingface_hub.errors import RepositoryNotFoundError
-
-        mock_model_info.side_effect = RepositoryNotFoundError("Not found")
+        from unittest.mock import Mock
+        
+        # Create a mock response object
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not found"
+        
+        mock_model_info.side_effect = RepositoryNotFoundError("Not found", response=mock_response)
 
         result = await api.get_model_info(model_url)
         assert result is None
@@ -212,9 +218,9 @@ def test_url_parsing_edge_cases():
     """Test URL parsing edge cases."""
     from src.urls import parse_url
 
-    # Test with unknown platform
+    # Test with unknown platform - defaults to DATASET category
     url = parse_url("https://example.com/some/model")
-    assert url.category == URLCategory.MODEL  # Default fallback
+    assert url.category == URLCategory.DATASET  # Unknown URLs default to DATASET
     assert url.platform == "unknown"
 
     # Single path part on HF

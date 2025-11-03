@@ -90,6 +90,8 @@ def test_audit_result_creation():
         dataset_quality_latency=180,
         code_quality=0.6,
         code_quality_latency=220,
+        reproducibility=0.9,
+        reproducibility_latency=150,
     )
 
     assert result.name == "test/model"
