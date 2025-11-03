@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import Optional
 from pydantic import BaseModel
 import uuid
@@ -18,7 +19,7 @@ from src.api.schemas import (
 )
 from src.api.dependencies import get_db, get_current_user, get_optional_user
 from src.database import crud
-from src.database.models import User
+from src.database.models import User, Package
 from src.utils.exceptions import PackageNotFoundError
 from src.ingest import validate_and_ingest
 from src.hf_api import HuggingFaceAPI
@@ -53,7 +54,7 @@ class IngestResponse(BaseModel):
 async def ingest_model(
     request: IngestRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    #current_user: User = Depends(get_current_user),
 ):
     """
     Ingest a public HuggingFace model.
@@ -144,7 +145,7 @@ async def ingest_model(
                 "model_name": model_name,
                 "source": "huggingface",
                 "scores": validation_result.get("all_scores"),
-                "uploaded_by": current_user.username,
+                #"uploaded_by": current_user.username,
             }
 
             storage.store_artifact(
@@ -165,7 +166,7 @@ async def ingest_model(
             s3_bucket="local",
             file_size_bytes=file_size,
             description=f"Ingested from HuggingFace: {model_name}",
-            uploaded_by=current_user.id,
+            #uploaded_by=current_user.id,
         )
 
         db.commit()
@@ -260,6 +261,96 @@ def get_package(
     package = crud.get_package_by_id(db, package_id)
     if not package:
         raise PackageNotFoundError(package_id)
+    
+    return package
+
+
+@router.get("/search/ingested", response_model=PackageListResponse)
+def search_ingested_models(
+    query: Optional[str] = Query(None, description="Search query for model name/description"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db)
+):
+    """
+    Search for ingested models by name or description.
+    
+    Args:
+        query: Search query string (searches model name and description)
+        page: Page number (1-indexed)
+        page_size: Number of items per page
+        db: Database session
+        
+    Returns:
+        Paginated list of ingested packages matching search criteria
+    """
+    # Calculate offset
+    offset = (page - 1) * page_size
+    
+    # Get all packages ingested from HuggingFace (those with "Ingested from HuggingFace" in description)
+    from sqlalchemy import or_
+    
+    packages_query = db.query(Package).filter(
+        Package.description.like("%Ingested from HuggingFace%")
+    )
+    
+    # Apply search filter if provided
+    if query:
+        packages_query = packages_query.filter(
+            or_(
+                Package.name.ilike(f"%{query}%"),
+                Package.description.ilike(f"%{query}%")
+            )
+        )
+    
+    # Get total count before pagination
+    total = packages_query.count()
+    
+    # Apply pagination
+    packages = packages_query.offset(offset).limit(page_size).all()
+    
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "packages": packages
+    }
+
+
+@router.get("/search/artifact", response_model=PackageResponse)
+def search_by_artifact_id(
+    artifact_id: str = Query(..., description="Artifact ID returned from ingest endpoint"),
+    db: Session = Depends(get_db)
+):
+    """
+    Search for a package by its artifact ID.
+    
+    The artifact ID is returned when a model is ingested via the /ingest endpoint.
+    This endpoint retrieves the package details using that artifact ID.
+    
+    Args:
+        artifact_id: The UUID artifact ID (e.g., "abc123-def456-...")
+        db: Database session
+        
+    Returns:
+        Package object matching the artifact ID
+        
+    Raises:
+        HTTPException: 404 if no package found with that artifact ID
+        
+    Example:
+        GET /api/v1/package/search/artifact?artifact_id=abc123-def456-ghi789
+    """
+    # The artifact_id is stored in s3_key as {artifact_id}.zip
+    s3_key = f"{artifact_id}.zip"
+    
+    package = db.query(Package).filter(Package.s3_key == s3_key).first()
+    
+    if not package:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No package found with artifact_id: {artifact_id}"
+        )
     
     return package
 
