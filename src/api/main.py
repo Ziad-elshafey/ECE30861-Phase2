@@ -302,7 +302,7 @@ def create_app() -> FastAPI:
         This endpoint is used by the autograder to verify implemented features.
         
         Implemented Tracks:
-        - AccessControl: Complete user authentication and authorization system
+        - Access control track: Complete user authentication and authorization system
           * User registration and login with JWT tokens
           * Role-based permissions (admin, upload, download, search)
           * Secure password hashing with bcrypt
@@ -310,31 +310,10 @@ def create_app() -> FastAPI:
           * User account management (create, read, update, delete)
         
         Returns:
-            Object with plannedTracks array and tracks array
+            Object with plannedTracks array matching OpenAPI spec enum values
         """
         return {
-            "plannedTracks": ["AccessControl"],
-            "tracks": [
-                {
-                    "name": "AccessControl",
-                    "description": "User authentication, authorization, and permission management",
-                    "features": [
-                        "User registration and authentication",
-                        "JWT token-based authorization",
-                        "Role-based access control (RBAC)",
-                        "Admin and regular user roles",
-                        "Secure password storage with bcrypt",
-                        "Token expiration and refresh",
-                        "User permission management"
-                    ],
-                    "endpoints": [
-                        "POST /api/v1/user/register",
-                        "POST /api/v1/user/login",
-                        "GET /api/v1/user/me",
-                        "DELETE /api/v1/user/{username}"
-                    ]
-                }
-            ]
+            "plannedTracks": ["Access control track"]
         }
     
     # Reset endpoint for autograder (public, no auth required)
