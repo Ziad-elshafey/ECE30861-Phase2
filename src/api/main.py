@@ -302,7 +302,7 @@ def create_app() -> FastAPI:
         This endpoint is used by the autograder to verify implemented features.
         
         Implemented Tracks:
-        - Access Control: Complete user authentication and authorization system
+        - AccessControl: Complete user authentication and authorization system
           * User registration and login with JWT tokens
           * Role-based permissions (admin, upload, download, search)
           * Secure password hashing with bcrypt
@@ -310,13 +310,13 @@ def create_app() -> FastAPI:
           * User account management (create, read, update, delete)
         
         Returns:
-            List of track names as strings
+            Object with plannedTracks array and tracks array
         """
         return {
-            "plannedTracks": ["Access Control"],
+            "plannedTracks": ["AccessControl"],
             "tracks": [
                 {
-                    "name": "Access Control",
+                    "name": "AccessControl",
                     "description": "User authentication, authorization, and permission management",
                     "features": [
                         "User registration and authentication",
@@ -410,6 +410,7 @@ def create_app() -> FastAPI:
         """
         Query artifacts from the registry.
         Use name="*" to list all artifacts.
+        Supports regex patterns for name matching.
         
         Args:
             queries: List of artifact queries
@@ -419,6 +420,7 @@ def create_app() -> FastAPI:
         Returns:
             List of matching artifact metadata
         """
+        from src.database.models import Package
         results = []
         
         for query in queries:
@@ -435,10 +437,14 @@ def create_app() -> FastAPI:
                         )
                     )
             else:
-                # Search by name
-                packages = db.query(Package).filter(
-                    Package.name.like(f"%{query.name}%")
-                ).all()
+                # Search by name with regex support
+                packages = crud.get_packages(
+                    db, 
+                    skip=0, 
+                    limit=1000,
+                    name_filter=query.name,
+                    use_regex=True
+                )
                 
                 for pkg in packages:
                     artifact_type = getattr(pkg, 'artifact_type', 'model')
