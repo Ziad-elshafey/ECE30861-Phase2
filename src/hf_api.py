@@ -48,35 +48,47 @@ class HuggingFaceAPI:
             }
             
             # Extract GitHub repository from card_data if available
-            card_data = getattr(model_info, "card_data", None)
-            if card_data:
-                # Check for source code URL in model card metadata
-                source_url = None
-                
-                # Try different common fields for GitHub links
-                has_get = hasattr(card_data, "get")
-                is_callable = callable(getattr(card_data, "get", None))
-                if has_get and is_callable:
-                    try:
-                        source_url = (
-                            card_data.get("source_url") or
-                            card_data.get("repo_url") or
-                            card_data.get("repository_url") or
-                            card_data.get("code_url")
-                        )
-                    except (AttributeError, TypeError):
-                        pass
-                
-                if source_url and "github.com" in source_url:
-                    info_dict["github_url"] = source_url
+            try:
+                card_data = getattr(model_info, "card_data", None)
+                if card_data:
+                    # Check for source code URL in model card metadata
+                    source_url = None
+                    
+                    # Try different common fields for GitHub links
+                    has_get = hasattr(card_data, "get")
+                    is_callable = callable(getattr(card_data, "get", None))
+                    if has_get and is_callable:
+                        try:
+                            source_url = (
+                                card_data.get("source_url") or
+                                card_data.get("repo_url") or
+                                card_data.get("repository_url") or
+                                card_data.get("code_url")
+                            )
+                        except (AttributeError, TypeError):
+                            pass
+                    
+                    if source_url and "github.com" in source_url:
+                        info_dict["github_url"] = source_url
+            except Exception:
+                # Ignore errors in GitHub extraction
+                pass
             
             # Also check tags for GitHub links
-            tags = getattr(model_info, "tags", [])
-            if tags:
-                for tag in tags:
-                    if isinstance(tag, str) and "github.com" in tag.lower():
-                        info_dict["github_url"] = tag
-                        break
+            try:
+                tags = getattr(model_info, "tags", [])
+                if tags:
+                    for tag in tags:
+                        is_github = (
+                            isinstance(tag, str) and
+                            "github.com" in tag.lower()
+                        )
+                        if is_github:
+                            info_dict["github_url"] = tag
+                            break
+            except Exception:
+                # Ignore errors in tag processing
+                pass
 
             # get file information
             try:
