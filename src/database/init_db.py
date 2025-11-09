@@ -31,8 +31,8 @@ def create_default_user():
     
     try:
         default_username = "ece30861defaultadminuser"
-        # Password with SQL injection attempt to test security
-        default_password = "correcthorsebatterystaple123(!__+@**(A;DROP TABLE packages'"
+        # Password with SQL injection attempt to test security (from OpenAPI spec)
+        default_password = "correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;"
         
         # Check if default user exists
         existing_user = get_user_by_username(db, default_username)
