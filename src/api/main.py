@@ -78,6 +78,49 @@ def create_app() -> FastAPI:
         """
         return {"status": "ok"}
     
+    # Tracks endpoint for autograder (public, no auth required)
+    @app.get("/tracks", tags=["tracks"])
+    def get_tracks():
+        """
+        Return available feature tracks implemented in the system.
+        This endpoint is used by the autograder to verify implemented features.
+        
+        Implemented Tracks:
+        - Access Control: Complete user authentication and authorization system
+          * User registration and login with JWT tokens
+          * Role-based permissions (admin, upload, download, search)
+          * Secure password hashing with bcrypt
+          * Token-based authentication for API endpoints
+          * User account management (create, read, update, delete)
+        
+        Returns:
+            List of track names as strings
+        """
+        return {
+            "plannedTracks": ["Access Control"],
+            "tracks": [
+                {
+                    "name": "Access Control",
+                    "description": "User authentication, authorization, and permission management",
+                    "features": [
+                        "User registration and authentication",
+                        "JWT token-based authorization",
+                        "Role-based access control (RBAC)",
+                        "Admin and regular user roles",
+                        "Secure password storage with bcrypt",
+                        "Token expiration and refresh",
+                        "User permission management"
+                    ],
+                    "endpoints": [
+                        "POST /api/v1/user/register",
+                        "POST /api/v1/user/login",
+                        "GET /api/v1/user/me",
+                        "DELETE /api/v1/user/{username}"
+                    ]
+                }
+            ]
+        }
+    
     return app
 
 
