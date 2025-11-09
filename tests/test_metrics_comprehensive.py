@@ -273,7 +273,7 @@ async def test_code_quality_no_repos(config):
     )
 
     result = await metric.compute(context, config)
-    assert result.score == 0.4  # Default medium score
+    assert result.score == 0.5  # Default score when no repos analyzed
 
 
 @pytest.mark.asyncio
