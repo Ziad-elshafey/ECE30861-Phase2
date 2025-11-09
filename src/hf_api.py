@@ -46,6 +46,31 @@ class HuggingFaceAPI:
                 "library_name": getattr(model_info, "library_name", None),
                 "model_index": getattr(model_info, "model_index", None),
             }
+            
+            # Extract GitHub repository from card_data if available
+            card_data = getattr(model_info, "card_data", None)
+            if card_data:
+                # Check for source code URL in model card metadata
+                source_url = None
+                
+                # Try different common fields for GitHub links
+                if hasattr(card_data, "get"):
+                    source_url = (
+                        card_data.get("source_url") or
+                        card_data.get("repo_url") or
+                        card_data.get("repository_url") or
+                        card_data.get("code_url")
+                    )
+                
+                if source_url and "github.com" in source_url:
+                    info_dict["github_url"] = source_url
+            
+            # Also check tags for GitHub links
+            tags = getattr(model_info, "tags", [])
+            for tag in tags:
+                if isinstance(tag, str) and "github.com" in tag.lower():
+                    info_dict["github_url"] = tag
+                    break
 
             # get file information
             try:

@@ -11,6 +11,7 @@ import zipfile
 import tempfile
 import shutil
 import httpx
+from datetime import datetime
 
 from src.api.schemas import (
     PackageCreate,
@@ -158,18 +159,34 @@ async def ingest_model(
         artifact_file_path = storage.models_path / f"{artifact_id}.zip"
         file_size = artifact_file_path.stat().st_size if artifact_file_path.exists() else 0
 
-        db_package = crud.create_package(
+        # Check if package already exists
+        existing_package = crud.get_package_by_name_version(
             db,
             name=model_name,
-            version="1.0.0",  # Default version for ingested models
-            s3_key=f"{artifact_id}.zip",
-            s3_bucket="local",
-            file_size_bytes=file_size,
-            description=f"Ingested from HuggingFace: {model_name}",
-            #uploaded_by=current_user.id,
+            version="1.0.0"
         )
 
-        db.commit()
+        if existing_package:
+            # Package already exists - update metadata
+            existing_package.s3_key = f"{artifact_id}.zip"
+            existing_package.file_size_bytes = file_size
+            existing_package.updated_at = datetime.utcnow()
+            db_package = existing_package
+            db.commit()
+            db.refresh(db_package)
+        else:
+            # Create new package
+            db_package = crud.create_package(
+                db,
+                name=model_name,
+                version="1.0.0",  # Default version for ingested models
+                s3_key=f"{artifact_id}.zip",
+                s3_bucket="local",
+                file_size_bytes=file_size,
+                description=f"Ingested from HuggingFace: {model_name}",
+                #uploaded_by=current_user.id,
+            )
+            db.commit()
 
         return IngestResponse(
             status=201,
@@ -287,9 +304,8 @@ def search_ingested_models(
     # Calculate offset
     offset = (page - 1) * page_size
     
-    # Get all packages ingested from HuggingFace (those with "Ingested from HuggingFace" in description)
-    from sqlalchemy import or_
-    
+    # Get all packages ingested from HuggingFace
+    # (those with "Ingested from HuggingFace" in description)
     packages_query = db.query(Package).filter(
         Package.description.like("%Ingested from HuggingFace%")
     )
@@ -429,3 +445,82 @@ def delete_package(
     crud.delete_package(db, package_id)
     
     return {"message": f"Package {package_id} deleted successfully"}
+
+
+# Artifacts query endpoint (OpenAPI spec compliant)
+class ArtifactQuery(BaseModel):
+    """Query for artifacts."""
+    name: str
+    types: Optional[list[str]] = None
+
+
+class ArtifactMetadata(BaseModel):
+    """Artifact metadata response."""
+    name: str
+    id: str
+    type: str
+
+
+@router.post(
+    "/artifacts",
+    response_model=list[ArtifactMetadata],
+    status_code=status.HTTP_200_OK,
+    tags=["artifacts"]
+)
+def query_artifacts(
+    queries: list[ArtifactQuery],
+    offset: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_optional_user),
+):
+    """
+    Query artifacts from the registry.
+    
+    Use name="*" to list all artifacts.
+    
+    Args:
+        queries: List of artifact queries
+        offset: Pagination offset
+        db: Database session
+        current_user: Optional authenticated user
+        
+    Returns:
+        List of matching artifact metadata
+    """
+    results = []
+    
+    for query in queries:
+        if query.name == "*":
+            # List all artifacts
+            packages = crud.get_all_packages(db)
+            for pkg in packages:
+                # Determine type from package metadata or default to model
+                artifact_type = getattr(pkg, 'type', 'model')
+                results.append(
+                    ArtifactMetadata(
+                        name=pkg.name,
+                        id=str(pkg.id),
+                        type=artifact_type
+                    )
+                )
+        else:
+            # Search by name
+            packages = db.query(Package).filter(
+                Package.name.like(f"%{query.name}%")
+            ).all()
+            
+            for pkg in packages:
+                # Filter by types if specified
+                artifact_type = getattr(pkg, 'type', 'model')
+                if query.types and artifact_type not in query.types:
+                    continue
+                    
+                results.append(
+                    ArtifactMetadata(
+                        name=pkg.name,
+                        id=str(pkg.id),
+                        type=artifact_type
+                    )
+                )
+    
+    return results

@@ -152,6 +152,7 @@ def create_package(
     s3_key: str,
     s3_bucket: str,
     file_size_bytes: int,
+    artifact_type: str = "model",
     description: Optional[str] = None,
     author: Optional[str] = None,
     license: Optional[str] = None,
@@ -166,6 +167,7 @@ def create_package(
     package = Package(
         name=name,
         version=version,
+        artifact_type=artifact_type,
         s3_key=s3_key,
         s3_bucket=s3_bucket,
         file_size_bytes=file_size_bytes,

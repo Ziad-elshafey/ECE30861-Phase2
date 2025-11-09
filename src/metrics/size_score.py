@@ -19,9 +19,17 @@ class SizeScoreMetric(BaseMetric):
         with measure_time() as get_latency:
             size_score = await self._calculate_size_scores(context, config)
         
-        # return MetricResult with SizeScore object as the score
+        # calculate average score across all devices
+        avg_score = (
+            size_score.raspberry_pi +
+            size_score.jetson_nano +
+            size_score.desktop_pc +
+            size_score.aws_server
+        ) / 4.0
+        
+        # return MetricResult with average float score
         return MetricResult(
-            score=size_score,
+            score=avg_score,
             latency=get_latency()
         )
 

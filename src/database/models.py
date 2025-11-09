@@ -107,6 +107,8 @@ class Package(Base):
     # Package identification
     name = Column(String(200), nullable=False, index=True)
     version = Column(String(50), nullable=False)
+    # Artifact type: model, dataset, or code
+    artifact_type = Column(String(20), nullable=False, default="model")
     
     # Metadata
     description = Column(Text, nullable=True)
