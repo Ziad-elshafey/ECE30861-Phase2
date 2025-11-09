@@ -54,23 +54,29 @@ class HuggingFaceAPI:
                 source_url = None
                 
                 # Try different common fields for GitHub links
-                if hasattr(card_data, "get"):
-                    source_url = (
-                        card_data.get("source_url") or
-                        card_data.get("repo_url") or
-                        card_data.get("repository_url") or
-                        card_data.get("code_url")
-                    )
+                has_get = hasattr(card_data, "get")
+                is_callable = callable(getattr(card_data, "get", None))
+                if has_get and is_callable:
+                    try:
+                        source_url = (
+                            card_data.get("source_url") or
+                            card_data.get("repo_url") or
+                            card_data.get("repository_url") or
+                            card_data.get("code_url")
+                        )
+                    except (AttributeError, TypeError):
+                        pass
                 
                 if source_url and "github.com" in source_url:
                     info_dict["github_url"] = source_url
             
             # Also check tags for GitHub links
             tags = getattr(model_info, "tags", [])
-            for tag in tags:
-                if isinstance(tag, str) and "github.com" in tag.lower():
-                    info_dict["github_url"] = tag
-                    break
+            if tags:
+                for tag in tags:
+                    if isinstance(tag, str) and "github.com" in tag.lower():
+                        info_dict["github_url"] = tag
+                        break
 
             # get file information
             try:
