@@ -13,8 +13,9 @@ from .metrics.license_score import LicenseScoreMetric
 from .metrics.performance_claims import PerformanceClaimsMetric
 from .metrics.ramp_up import RampUpTimeMetric
 from .metrics.Reproducibility import ReproducibilityMetric
+from .metrics.reviewedness import ReviewednessMetric
 from .metrics.size_score import SizeScoreMetric
-from .models import AuditResult, MetricResult, ModelContext, SizeScore
+from .models import AuditResult, MetricResult, ModelContext, ParsedURL, URLCategory
 from .utils import measure_time
 
 logger = get_logger()
@@ -36,6 +37,7 @@ class MetricScorer:
             DatasetQualityMetric(),
             CodeQualityMetric(),
             ReproducibilityMetric(),
+            ReviewednessMetric(),
         ]
         self.hf_api = HuggingFaceAPI() #hf client for enhancing
 
@@ -66,7 +68,7 @@ class MetricScorer:
                 "dataset_quality": 0.10,
                 "code_quality": 0.10,
                 "reproducibility": 0.10,
-                "reviewedness": 0.0,  # Not implemented yet
+                "reviewedness": 0.10,
                 "treescore": 0.0,  # Not implemented yet
             },
             "thresholds": {
@@ -90,19 +92,16 @@ class MetricScorer:
             # calculate net score
             net_score = self._calculate_net_score(metric_results)
 
-        # build audit result - handle size score properly
-        size_score_result = metric_results.get("size_score")
-        if isinstance(size_score_result, SizeScore):
-            size_score_obj = size_score_result
-        else:
-            # fallback if size score format is unexpected
-            size_score_obj = SizeScore(
-                raspberry_pi=0.0, jetson_nano=0.0, desktop_pc=0.0, aws_server=0.0
-            )
+        # build audit result - recalculate size_score breakdown for AuditResult
+        size_score_metric = SizeScoreMetric()
+        size_score_config = self.config.get("metrics", {}).get("size_score", {})
+        size_score_breakdown = await size_score_metric._calculate_size_scores(
+            context, size_score_config
+        )
 
-        #assemble flat audit record 
-        # Extract default MetricResult for reproducibility to avoid duplication
+        # Extract default MetricResult to avoid duplication
         reproducibility_default = MetricResult(score=0.0, latency=0)
+        reviewedness_default = MetricResult(score=-1.0, latency=0)
         
         return AuditResult(
             name=context.model_url.name,
@@ -117,8 +116,8 @@ class MetricScorer:
             performance_claims_latency=metric_results["performance_claims"].latency,
             license=metric_results["license"].score,
             license_latency=metric_results["license"].latency,
-            size_score=size_score_obj,
-            size_score_latency=metric_results["size_score_latency"],
+            size_score=size_score_breakdown,
+            size_score_latency=metric_results["size_score"].latency,
             dataset_and_code_score=metric_results["dataset_and_code_score"].score,
             dataset_and_code_score_latency=metric_results["dataset_and_code_score"].latency,
             dataset_quality=metric_results["dataset_quality"].score,
@@ -127,8 +126,8 @@ class MetricScorer:
             code_quality_latency=metric_results["code_quality"].latency,
             reproducibility=metric_results.get("reproducibility", reproducibility_default).score,
             reproducibility_latency=metric_results.get("reproducibility", reproducibility_default).latency,
-            reviewedness=0.0,  # Placeholder for now (not implemented yet)
-            reviewedness_latency=0,
+            reviewedness=metric_results.get("reviewedness", reviewedness_default).score,
+            reviewedness_latency=metric_results.get("reviewedness", reviewedness_default).latency,
             treescore=0.0,  # Placeholder for now (not implemented yet)
             treescore_latency=0,
         )
@@ -144,7 +143,43 @@ class MetricScorer:
 
         try:
             # README content
-            context.readme_content = await self.hf_api.get_readme_content(context.model_url)
+            context.readme_content = await self.hf_api.get_readme_content(
+                context.model_url
+            )
+            
+            # Extract GitHub repository from README
+            if context.readme_content:
+                import re
+                # Look for GitHub URLs in README
+                github_patterns = [
+                    r'https?://github\.com/([^/\s]+)/([^/\s\)]+)',
+                    r'github\.com/([^/\s]+)/([^/\s\)]+)',
+                ]
+                
+                for pattern in github_patterns:
+                    matches = re.findall(pattern, context.readme_content)
+                    if matches:
+                        # Take the first match
+                        owner, repo = matches[0]
+                        # Clean up repo name (remove trailing punctuation)
+                        repo = re.sub(r'[.,;:\)]$', '', repo)
+                        
+                        github_url = f"https://github.com/{owner}/{repo}"
+                        github_parsed = ParsedURL(
+                            url=github_url,
+                            category=URLCategory.CODE,
+                            name=f"{owner}/{repo}",
+                            platform="github",
+                            owner=owner,
+                            repo=repo,
+                        )
+                        context.code_repos.append(github_parsed)
+                        logger.info(f"Found GitHub repo in README: {github_url}")
+                        break
+                        
+        except Exception as e:
+            logger.error(f"Failed to get README content: {e}")
+            context.readme_content = None
         except Exception as e:
             logger.error(f"Failed to get README content: {e}")
             context.readme_content = None
@@ -159,51 +194,49 @@ class MetricScorer:
         logger.info(f"Enriched context for {context.model_url.name}") #sanity log
 
     # compute all metrics in parallel
-    async def _compute_metrics_parallel(self, context: ModelContext) -> Dict[str, Any]:
+    async def _compute_metrics_parallel(
+        self, context: ModelContext
+    ) -> Dict[str, Any]:
         import asyncio
         
-        # create tasks for all metrics
-        #creating routine tasks for all metrics
+        # create tasks for all metrics - creating routine tasks
         tasks = []
+        metric_names = []
+        
         for metric in self.metrics:
             task = metric.compute(context, self.config)
-            tasks.append((metric.name, task))
+            tasks.append(task)
+            metric_names.append(metric.name)
 
         # execute all tasks concurrently using asyncio.gather
-        results = {}
-        
-        # process each metric
-        for metric_name, task in tasks:
-            try:
-                result = await task #run metric
-                
-                if metric_name == "size_score":
-                    # special handling for size score - it returns MetricResult with SizeScore
-                    if isinstance(result.score, SizeScore):
-                        results[metric_name] = result.score
-                        results["size_score_latency"] = result.latency
-                    else:
-                        # fallback
-                        results[metric_name] = SizeScore(
-                            raspberry_pi=0.0, jetson_nano=0.0, desktop_pc=0.0, aws_server=0.0
-                        )
-                        results["size_score_latency"] = result.latency if hasattr(result, 'latency') else 0
-                else:
-                    # normal MetricResult handling
-                    results[metric_name] = result
-                    
-            except Exception as e:
-                logger.error(f"Error computing {metric_name}: {e}")
-                # default result
-                if metric_name == "size_score":
-                    results[metric_name] = SizeScore(
-                        raspberry_pi=0.0, jetson_nano=0.0, desktop_pc=0.0, aws_server=0.0
-                    )
-                    results["size_score_latency"] = 0
-                else:
+        try:
+            # Run all metrics in parallel
+            task_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Build results dictionary
+            results = {}
+            for metric_name, result in zip(metric_names, task_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error computing {metric_name}: {result}")
+                    # default result on error
                     results[metric_name] = MetricResult(score=0.0, latency=0)
-
-        return results
+                elif isinstance(result, MetricResult):
+                    results[metric_name] = result
+                else:
+                    logger.warning(
+                        f"Unexpected result type for {metric_name}: {type(result)}"
+                    )
+                    results[metric_name] = MetricResult(score=0.0, latency=0)
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in parallel metric computation: {e}")
+            # Return default results for all metrics
+            return {
+                metric_name: MetricResult(score=0.0, latency=0)
+                for metric_name in metric_names
+            }
 
     def _calculate_net_score(self, metric_results: Dict[str, Any]) -> float:
         # calculate weighted net score from individual metrics
@@ -216,18 +249,12 @@ class MetricScorer:
             if metric_name.endswith("_latency"):
                 continue  # skip latency fields
 
-            if metric_name == "size_score" and isinstance(result, SizeScore):
-                weight = weights.get("size_score", 0.0)
-                # average across all devices
-                avg_size_score = (
-                    result.raspberry_pi + result.jetson_nano + result.desktop_pc + result.aws_server
-                ) / 4.0
-                total_score += avg_size_score * weight
-                total_weight += weight
-                continue
-
             weight = weights.get(metric_name, 0.0)
             if isinstance(result, MetricResult):
+                # Skip metrics with negative scores (not applicable)
+                if result.score < 0:
+                    continue
+                    
                 total_score += result.score * weight
                 total_weight += weight
 
@@ -237,16 +264,8 @@ class MetricScorer:
             for metric_name, result in metric_results.items():
                 if metric_name.endswith("_latency"):
                     continue
-                if isinstance(result, MetricResult):
+                if isinstance(result, MetricResult) and result.score >= 0:
                     present_scores.append(result.score)
-            
-            # size_score as average across devices if present
-            size_score = metric_results.get("size_score")
-            if isinstance(size_score, SizeScore):
-                present_scores.append(
-                    (size_score.raspberry_pi + size_score.jetson_nano + 
-                     size_score.desktop_pc + size_score.aws_server) / 4.0
-                )
             
             net_score = sum(present_scores) / max(len(present_scores), 1)
         else:

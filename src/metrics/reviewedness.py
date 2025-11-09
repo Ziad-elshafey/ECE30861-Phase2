@@ -1,0 +1,253 @@
+"""Reviewedness metric: fraction of code introduced through reviewed PRs."""
+
+import asyncio
+import re
+import subprocess
+from pathlib import Path
+from typing import Any, Dict, Tuple
+
+from ..git_inspect import GitInspector
+from ..models import MetricResult, ModelContext
+from ..utils import measure_time
+from .base import BaseMetric
+from ..logging_utils import get_logger
+
+logger = get_logger()
+
+
+# File extensions for model weights (exclude from code review analysis)
+WEIGHT_EXTENSIONS = {
+    '.pt', '.pth', '.bin', '.safetensors', '.h5', '.pb', 
+    '.onnx', '.tflite', '.ckpt', '.pkl', '.pickle', 
+    '.npz', '.npy', '.weights'
+}
+
+# File extensions considered as code
+CODE_EXTENSIONS = {
+    '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', 
+    '.c', '.h', '.hpp', '.go', '.rs', '.rb', '.php', 
+    '.swift', '.kt', '.scala', '.cs', '.r', '.m', '.sh',
+    '.yaml', '.yml', '.json', '.toml', '.xml'
+}
+
+# Maximum file size to consider as code (10MB)
+MAX_CODE_FILE_SIZE = 10 * 1024 * 1024
+
+
+class ReviewednessMetric(BaseMetric):
+    """Evaluate fraction of code introduced through pull requests with reviews."""
+
+    @property
+    def name(self) -> str:
+        return "reviewedness"
+
+    async def compute(
+        self, context: ModelContext, config: Dict[str, Any]
+    ) -> MetricResult:
+        """Compute reviewedness score.
+        
+        Returns:
+            MetricResult with score:
+            - 0.0 to 1.0: fraction of code lines from reviewed PRs
+            - -1.0: no GitHub repository linked
+        """
+        with measure_time() as get_latency:
+            # Run blocking git operations in thread pool for true parallelism
+            score = await asyncio.to_thread(
+                self._calculate_reviewedness_score_sync,
+                context,
+                config
+            )
+
+        return MetricResult(score=score, latency=get_latency())
+
+    def _calculate_reviewedness_score_sync(
+        self, context: ModelContext, config: Dict[str, Any]
+    ) -> float:
+        """Synchronous implementation of reviewedness calculation."""
+        
+        # Check if there's a GitHub repository
+        if not context.code_repos:
+            logger.info("No GitHub repository found, returning -1")
+            return -1.0
+
+        git_inspector = GitInspector()
+        try:
+            # Clone the first code repository
+            for code_repo in context.code_repos[:1]:  # Only analyze first repo
+                repo_path = git_inspector.clone_repo(code_repo)
+                if not repo_path:
+                    logger.warning(f"Failed to clone {code_repo.url}")
+                    continue
+
+                # Calculate reviewedness from git history
+                reviewed_lines, total_lines = self._analyze_git_history(repo_path)
+                
+                # Check for error condition (both are -1)
+                if reviewed_lines == -1 and total_lines == -1:
+                    logger.warning("Git operation failed")
+                    return -1.0
+                
+                if total_lines == 0:
+                    logger.warning("No code lines found in repository")
+                    return 0.0
+
+                score = reviewed_lines / total_lines
+                logger.info(
+                    f"Reviewedness: {reviewed_lines}/{total_lines} = {score:.3f}"
+                )
+                return score
+
+            # If we couldn't clone any repo
+            logger.warning("Could not clone any code repository")
+            return -1.0
+
+        except Exception as e:
+            logger.error(f"Error calculating reviewedness: {e}", exc_info=True)
+            return -1.0
+        finally:
+            git_inspector.cleanup()
+
+    def _analyze_git_history(self, repo_path: str) -> Tuple[int, int]:
+        """Analyze git history to calculate reviewed vs total lines.
+        
+        Returns:
+            Tuple of (reviewed_lines, total_lines)
+        """
+        try:
+            # Get all commits with their stats
+            result = subprocess.run(
+                ['git', 'log', '--all', '--numstat', '--pretty=format:%H|%s'],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                logger.warning(f"Git log failed: {result.stderr}")
+                return (-1, -1)
+
+            return self._parse_git_log_output(result.stdout, repo_path)
+
+        except subprocess.TimeoutExpired:
+            logger.warning("Git log command timed out")
+            return (-1, -1)
+        except FileNotFoundError:
+            logger.error("Git command not found")
+            return (-1, -1)
+        except Exception as e:
+            logger.error(f"Error analyzing git history: {e}")
+            return (-1, -1)
+
+    def _parse_git_log_output(
+        self, git_output: str, repo_path: str
+    ) -> Tuple[int, int]:
+        """Parse git log output and calculate reviewed/total lines."""
+        
+        reviewed_lines = 0
+        total_lines = 0
+        current_commit = None
+        current_is_reviewed = False
+
+        lines = git_output.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Check if this is a commit header
+            if '|' in line and not '\t' in line:
+                parts = line.split('|', 1)
+                if len(parts) == 2:
+                    current_commit = parts[0]
+                    commit_message = parts[1]
+                    
+                    # Check if commit is from a reviewed PR
+                    current_is_reviewed = self._is_reviewed_commit(
+                        commit_message, repo_path, current_commit
+                    )
+                continue
+
+            # Parse numstat line: "added\tdeleted\tfilename"
+            if '\t' in line:
+                parts = line.split('\t')
+                if len(parts) >= 3:
+                    added_str, deleted_str, filename = parts[0], parts[1], parts[2]
+                    
+                    # Skip if not a code file
+                    if not self._is_code_file(filename, repo_path):
+                        continue
+
+                    # Parse additions
+                    try:
+                        added = int(added_str) if added_str != '-' else 0
+                    except ValueError:
+                        continue
+
+                    # Count lines
+                    if current_is_reviewed:
+                        reviewed_lines += added
+                    total_lines += added
+
+        return (reviewed_lines, total_lines)
+
+    def _is_reviewed_commit(
+        self, commit_message: str, repo_path: str, commit_hash: str
+    ) -> bool:
+        """Check if a commit was introduced through a reviewed PR.
+        
+        Detection strategies:
+        1. Commit message contains PR reference (e.g., "#123", "PR #456")
+        2. Commit is a merge commit with PR reference
+        3. Check if commit is referenced in any PR merge commit
+        """
+        
+        # Strategy 1: Check for PR references in commit message
+        pr_patterns = [
+            r'#(\d+)',           # #123
+            r'PR\s*#(\d+)',      # PR #123
+            r'Merge pull request #(\d+)',  # Merge pull request #123
+            r'\(#(\d+)\)',       # Fixes (#123)
+        ]
+        
+        for pattern in pr_patterns:
+            if re.search(pattern, commit_message, re.IGNORECASE):
+                return True
+
+        # Strategy 2: Check if it's a merge commit
+        if commit_message.lower().startswith('merge'):
+            return True
+
+        return False
+
+    def _is_code_file(self, filename: str, repo_path: str) -> bool:
+        """Check if a file should be considered as code (not weights)."""
+        
+        # Get file extension
+        ext = Path(filename).suffix.lower()
+        
+        # Exclude weight files
+        if ext in WEIGHT_EXTENSIONS:
+            return False
+
+        # Include known code files
+        if ext in CODE_EXTENSIONS:
+            # Check file size if it exists
+            file_path = Path(repo_path) / filename
+            if file_path.exists():
+                try:
+                    if file_path.stat().st_size > MAX_CODE_FILE_SIZE:
+                        return False
+                except OSError:
+                    pass
+            return True
+
+        # Exclude files in common weight directories
+        weight_dirs = {'models', 'weights', 'checkpoints', 'model_weights'}
+        path_parts = set(Path(filename).parts)
+        if path_parts & weight_dirs:
+            return False
+
+        return False

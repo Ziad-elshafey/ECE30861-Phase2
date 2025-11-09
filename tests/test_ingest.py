@@ -55,7 +55,7 @@ class TestIngestValidator:
                 aws_server=0.9,
             ),
             size_score_latency=0,
-            reviewedness=0.0,
+            reviewedness=-1.0,  # Not applicable
             reviewedness_latency=0,
             treescore=0.0,
             treescore_latency=0,
@@ -96,7 +96,7 @@ class TestIngestValidator:
                 aws_server=0.9,
             ),
             size_score_latency=0,
-            reviewedness=0.0,
+            reviewedness=-1.0,  # Not applicable
             reviewedness_latency=0,
             treescore=0.0,
             treescore_latency=0,
@@ -139,7 +139,7 @@ class TestIngestValidator:
                 aws_server=0.5,
             ),
             size_score_latency=0,
-            reviewedness=0.0,
+            reviewedness=-1.0,  # Not applicable
             reviewedness_latency=0,
             treescore=0.0,
             treescore_latency=0,
@@ -228,7 +228,7 @@ class TestIngestValidator:
                     aws_server=0.9,
                 ),
                 size_score_latency=0,
-                reviewedness=0.0,
+                reviewedness=-1.0,  # Not applicable
                 reviewedness_latency=0,
                 treescore=0.0,
                 treescore_latency=0,
@@ -277,7 +277,7 @@ class TestIngestValidator:
                     aws_server=0.9,
                 ),
                 size_score_latency=0,
-                reviewedness=0.0,
+                reviewedness=-1.0,  # Not applicable
                 reviewedness_latency=0,
                 treescore=0.0,
                 treescore_latency=0,
@@ -393,10 +393,12 @@ class TestIngestQualityGateMetrics:
 
     def test_quality_gate_metrics_defined(self):
         """Test that quality gate metrics are properly defined."""
-        assert len(INGEST_QUALITY_GATE_METRICS) == 8
+        # Updated for reviewedness metric
+        assert len(INGEST_QUALITY_GATE_METRICS) == 9
         assert "reproducibility" in INGEST_QUALITY_GATE_METRICS
         assert "code_quality" in INGEST_QUALITY_GATE_METRICS
         assert "license" in INGEST_QUALITY_GATE_METRICS
+        assert "reviewedness" in INGEST_QUALITY_GATE_METRICS
 
     def test_quality_gate_thresholds(self):
         """Test that all thresholds are 0.5."""
