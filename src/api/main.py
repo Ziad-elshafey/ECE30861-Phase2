@@ -505,11 +505,33 @@ def create_app() -> FastAPI:
             db,
             name=model_name,
             version="1.0.0",
+            artifact_type=artifact_type,  # Pass the artifact type
             s3_key=artifact_id,
+            s3_bucket="",  # Local storage, no S3
+            file_size_bytes=0,  # Will be updated later
+            source_url=url,
             uploaded_by=1  # Default admin user
         )
         
-        # Return response
+        # Store the quality gate scores in database
+        if validation_result and validation_result.get("all_scores"):
+            scores = validation_result["all_scores"]
+            crud.create_or_update_package_score(
+                db,
+                package_id=package.id,
+                ramp_up_time=scores.get("ramp_up_time", 0.0),
+                bus_factor=scores.get("bus_factor", 0.0),
+                performance_claims=scores.get("performance_claims", 0.0),
+                license_score=scores.get("license_score", 0.0),
+                dataset_quality=scores.get("dataset_quality", 0.0),
+                dataset_code_linkage=scores.get("dataset_and_code", 0.0),
+                code_quality=scores.get("code_quality", 0.0),
+                reproducibility=scores.get("reproducibility", 0.0),
+                reviewedness=scores.get("reviewedness", 0.0),
+                net_score=scores.get("net_score", 0.0)
+            )
+        
+        # Return response (per OpenAPI spec - no scores in ingest response)
         return ArtifactIngestResponse(
             metadata=ArtifactMetadata(
                 name=model_name,
@@ -518,6 +540,105 @@ def create_app() -> FastAPI:
             ),
             data=ArtifactData(url=url)
         )
+    
+    # Rate endpoint - GET /artifact/model/{id}/rate (BASELINE)
+    @app.get(
+        "/artifact/model/{id}/rate",
+        tags=["artifacts"],
+        status_code=200
+    )
+    def get_model_rating(
+        id: str,
+        db: Session = Depends(get_db),
+    ):
+        """
+        Get ratings/scores for a model artifact.
+        
+        Per OpenAPI spec: Returns ModelRating with all quality metrics.
+        This is separate from the ingest endpoint.
+        
+        Args:
+            id: Artifact ID
+            db: Database session
+            
+        Returns:
+            ModelRating with all scores
+        """
+        from fastapi import HTTPException
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact with ID {id} not found"
+            )
+        
+        # Get scores
+        scores = crud.get_package_scores(db, package_id)
+        if not scores:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No ratings found for artifact {id}"
+            )
+        
+        # Return rating response
+        return {
+            "BusFactor": (
+                scores.bus_factor if scores.bus_factor is not None else 0.0
+            ),
+            "BusFactorLatency": 0.0,  # Not tracked separately
+            "Correctness": (
+                scores.code_quality if scores.code_quality is not None else 0.0
+            ),
+            "CorrectnessLatency": 0.0,
+            "RampUp": (
+                scores.ramp_up_time if scores.ramp_up_time is not None else 0.0
+            ),
+            "RampUpLatency": 0.0,
+            "ResponsiveMaintainer": (
+                scores.performance_claims
+                if scores.performance_claims is not None
+                else 0.0
+            ),
+            "ResponsiveMaintainerLatency": 0.0,
+            "LicenseScore": (
+                scores.license_score
+                if scores.license_score is not None
+                else 0.0
+            ),
+            "LicenseScoreLatency": 0.0,
+            "GoodPinningPractice": (
+                scores.dataset_quality
+                if scores.dataset_quality is not None
+                else 0.0
+            ),
+            "GoodPinningPracticeLatency": 0.0,
+            "PullRequest": (
+                scores.reviewedness
+                if scores.reviewedness is not None
+                else 0.0
+            ),
+            "PullRequestLatency": 0.0,
+            "NetScore": (
+                scores.net_score if scores.net_score is not None else 0.0
+            ),
+            "NetScoreLatency": 0.0,
+            "Reproducibility": (
+                scores.reproducibility
+                if scores.reproducibility is not None
+                else 0.0
+            ),
+            "ReproducibilityLatency": 0.0,
+        }
     
     return app
 
