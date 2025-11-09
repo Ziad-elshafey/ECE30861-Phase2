@@ -1,7 +1,7 @@
 """Main FastAPI application factory."""
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, Query
+from fastapi import FastAPI, Depends, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from sqlalchemy.orm import Session
@@ -316,6 +316,64 @@ def create_app() -> FastAPI:
             "plannedTracks": ["Access control track"]
         }
     
+    # Authentication endpoint (OpenAPI spec)
+    class AuthenticationUser(BaseModel):
+        """User info for authentication."""
+        name: str
+        is_admin: bool
+
+    class AuthenticationSecret(BaseModel):
+        """Secret info for authentication."""
+        password: str
+
+    class AuthenticationRequest(BaseModel):
+        """Authentication request per OpenAPI spec."""
+        user: AuthenticationUser
+        secret: AuthenticationSecret
+
+    @app.put("/authenticate", tags=["authentication"])
+    def authenticate_user(
+        auth_request: AuthenticationRequest,
+        db: Session = Depends(get_db)
+    ):
+        """
+        Authenticate user and return JWT token (OpenAPI spec).
+        
+        Args:
+            auth_request: Authentication request with user and secret
+            db: Database session
+            
+        Returns:
+            JWT token as a string (e.g., "bearer eyJ...")
+            
+        Raises:
+            HTTPException 401: Invalid credentials
+            HTTPException 400: Missing fields
+        """
+        from src.database import crud
+        from src.auth.password_hash import verify_password
+        from src.auth.jwt_handler import create_access_token
+        from datetime import timedelta
+        
+        # Get user from database
+        user = crud.get_user_by_username(db, auth_request.user.name)
+        
+        # Verify user exists and password is correct
+        if not user or not verify_password(auth_request.secret.password, user.hashed_password):
+            raise HTTPException(
+                status_code=401,
+                detail="The user or password is invalid."
+            )
+        
+        # Create access token
+        access_token = create_access_token(
+            data={"sub": user.username},
+            expires_delta=timedelta(hours=10)
+        )
+        
+        # Return token as string wrapped in quotes per spec example
+        return f"bearer {access_token}"
+    
     # Reset endpoint for autograder (public, no auth required)
     @app.delete("/reset", tags=["system"])
     def reset_system():
@@ -439,6 +497,73 @@ def create_app() -> FastAPI:
                     )
         
         return results
+    
+    # Regex search endpoint (OpenAPI spec - BASELINE)
+    class ArtifactRegEx(BaseModel):
+        """Artifact regex query."""
+        regex: str
+
+    @app.post(
+        "/artifact/byRegEx",
+        response_model=list[ArtifactMetadata],
+        tags=["artifacts"]
+    )
+    def search_artifacts_by_regex(
+        regex_query: ArtifactRegEx,
+        db: Session = Depends(get_db),
+    ):
+        """
+        Search for artifacts using regular expression (BASELINE).
+        
+        Searches artifact names using the provided regex pattern.
+        
+        Args:
+            regex_query: Object containing regex pattern
+            db: Database session
+            
+        Returns:
+            List of matching artifact metadata
+            
+        Raises:
+            HTTPException 400: Invalid regex pattern
+            HTTPException 404: No artifacts found
+        """
+        try:
+            # Search packages using regex
+            packages = crud.get_packages(
+                db,
+                skip=0,
+                limit=1000,
+                name_filter=regex_query.regex,
+                use_regex=True
+            )
+            
+            if not packages:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No artifact found under this regex."
+                )
+            
+            results = []
+            for pkg in packages:
+                artifact_type = getattr(pkg, 'artifact_type', 'model')
+                results.append(
+                    ArtifactMetadata(
+                        name=pkg.name,
+                        id=str(pkg.id),
+                        type=artifact_type
+                    )
+                )
+            
+            return results
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid regex pattern: {str(e)}"
+            )
     
     # Ingest artifact endpoint (OpenAPI spec)
     class ArtifactData(BaseModel):
