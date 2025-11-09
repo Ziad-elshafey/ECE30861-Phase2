@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -88,8 +88,201 @@ def create_app() -> FastAPI:
             "name": settings.PROJECT_NAME,
             "version": settings.PROJECT_VERSION,
             "docs": "/docs",
-            "health": "/health"
+            "health": "/health",
+            "frontend": "/frontend"
         }
+    
+    # Frontend endpoint for autograder
+    @app.get("/frontend", response_class=HTMLResponse, tags=["frontend"])
+    def frontend():
+        """
+        Simple frontend interface for the ML Model Registry.
+        Provides a basic HTML page for interacting with the API.
+        """
+        html_content = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>ML Model Registry - Frontend</title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
+                .container {
+                    background: white;
+                    border-radius: 20px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    max-width: 800px;
+                    width: 100%;
+                    padding: 40px;
+                }
+                h1 {
+                    color: #667eea;
+                    margin-bottom: 10px;
+                    font-size: 2.5em;
+                }
+                .subtitle {
+                    color: #666;
+                    margin-bottom: 30px;
+                    font-size: 1.1em;
+                }
+                .section {
+                    margin: 30px 0;
+                }
+                .section h2 {
+                    color: #333;
+                    margin-bottom: 15px;
+                    font-size: 1.5em;
+                    border-bottom: 2px solid #667eea;
+                    padding-bottom: 10px;
+                }
+                .links {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 15px;
+                    margin-top: 20px;
+                }
+                .link-card {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 10px;
+                    text-decoration: none;
+                    transition: transform 0.2s, box-shadow 0.2s;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    text-align: center;
+                }
+                .link-card:hover {
+                    transform: translateY(-5px);
+                    box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+                }
+                .link-card h3 {
+                    font-size: 1.2em;
+                    margin-bottom: 10px;
+                }
+                .link-card p {
+                    font-size: 0.9em;
+                    opacity: 0.9;
+                }
+                .status {
+                    display: inline-block;
+                    background: #10b981;
+                    color: white;
+                    padding: 5px 15px;
+                    border-radius: 20px;
+                    font-size: 0.9em;
+                    font-weight: bold;
+                }
+                .info-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                    gap: 15px;
+                    margin-top: 20px;
+                }
+                .info-card {
+                    background: #f3f4f6;
+                    padding: 20px;
+                    border-radius: 10px;
+                    text-align: center;
+                }
+                .info-card strong {
+                    display: block;
+                    color: #667eea;
+                    font-size: 2em;
+                    margin-bottom: 5px;
+                }
+                .info-card span {
+                    color: #666;
+                    font-size: 0.9em;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🚀 ML Model Registry</h1>
+                <p class="subtitle">Trustworthy Machine Learning Model Management Platform</p>
+                <p><span class="status">✓ System Online</span></p>
+                
+                <div class="section">
+                    <h2>📊 Quick Stats</h2>
+                    <div class="info-grid">
+                        <div class="info-card">
+                            <strong>8</strong>
+                            <span>Quality Metrics</span>
+                        </div>
+                        <div class="info-card">
+                            <strong>REST</strong>
+                            <span>API Type</span>
+                        </div>
+                        <div class="info-card">
+                            <strong>JWT</strong>
+                            <span>Auth Method</span>
+                        </div>
+                        <div class="info-card">
+                            <strong>AWS</strong>
+                            <span>Cloud Provider</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2>🔗 API Resources</h2>
+                    <div class="links">
+                        <a href="/docs" class="link-card">
+                            <h3>📚 API Docs</h3>
+                            <p>Interactive Swagger UI</p>
+                        </a>
+                        <a href="/redoc" class="link-card">
+                            <h3>📖 ReDoc</h3>
+                            <p>Alternative API docs</p>
+                        </a>
+                        <a href="/health" class="link-card">
+                            <h3>💚 Health</h3>
+                            <p>System status</p>
+                        </a>
+                        <a href="/tracks" class="link-card">
+                            <h3>🛤️ Tracks</h3>
+                            <p>Feature tracks</p>
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2>🎯 Features</h2>
+                    <ul style="list-style: none; padding-left: 0;">
+                        <li style="padding: 10px 0; border-bottom: 1px solid #eee;">✓ User Authentication & Authorization (JWT)</li>
+                        <li style="padding: 10px 0; border-bottom: 1px solid #eee;">✓ Package Upload & Management</li>
+                        <li style="padding: 10px 0; border-bottom: 1px solid #eee;">✓ Quality Scoring (8 Metrics)</li>
+                        <li style="padding: 10px 0; border-bottom: 1px solid #eee;">✓ HuggingFace Model Ingestion</li>
+                        <li style="padding: 10px 0; border-bottom: 1px solid #eee;">✓ Regex Search & Filtering</li>
+                        <li style="padding: 10px 0;">✓ System Health Monitoring</li>
+                    </ul>
+                </div>
+                
+                <div class="section" style="text-align: center; padding-top: 20px; border-top: 2px solid #eee;">
+                    <p style="color: #666;">
+                        <strong>Team 20</strong> | Ahmed Elbehiry • Zeyad Elshafey • Omar Ahmed • Jacob Walter
+                    </p>
+                    <p style="color: #999; margin-top: 10px; font-size: 0.9em;">
+                        ECE30861 - Software Engineering | Purdue University
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
     
     # Health endpoint for autograder/monitoring (public, no auth required)
     @app.get("/health", tags=["health"])
