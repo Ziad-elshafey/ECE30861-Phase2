@@ -462,6 +462,134 @@ def create_app() -> FastAPI:
             "ReproducibilityLatency": 0.0,
         }
     
+    # Get artifact by name endpoint (BASELINE)
+    @app.get(
+        "/artifact/byName/{name:path}",
+        response_model=list[ArtifactMetadata],
+        tags=["artifacts"]
+    )
+    def get_artifact_by_name(
+        name: str,
+        db: Session = Depends(get_db),
+    ):
+        """
+        List artifact metadata for this name.
+        
+        Returns all artifacts (models, datasets, code) that match the
+        given name. Multiple artifacts can share the same name but have
+        different IDs.
+        
+        Note: Uses :path converter to allow names with slashes (/).
+        
+        Args:
+            name: Artifact name to search for
+            db: Database session
+            
+        Returns:
+            List of artifact metadata entries matching the name
+        """
+        from fastapi import HTTPException
+        
+        # Search for packages with this exact name
+        packages = db.query(Package).filter(Package.name == name).all()
+        
+        if not packages:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No artifact found with name: {name}"
+            )
+        
+        # Return all matching artifacts
+        results = []
+        for pkg in packages:
+            artifact_type = getattr(pkg, 'artifact_type', 'model')
+            results.append(
+                ArtifactMetadata(
+                    name=pkg.name,
+                    id=str(pkg.id),
+                    type=artifact_type
+                )
+            )
+        
+        return results
+    
+    # Get artifact by type and ID endpoint (BASELINE)
+    class Artifact(BaseModel):
+        """Complete artifact with metadata and data."""
+        metadata: ArtifactMetadata
+        data: ArtifactData
+    
+    @app.get(
+        "/artifacts/{artifact_type}/{id}",
+        response_model=Artifact,
+        tags=["artifacts"]
+    )
+    def get_artifact_by_id(
+        artifact_type: str,
+        id: str,
+        db: Session = Depends(get_db),
+    ):
+        """
+        Retrieve artifact by type and ID.
+        
+        Per OpenAPI spec: Returns artifact with metadata and data (url).
+        
+        Args:
+            artifact_type: Type of artifact (model, dataset, code)
+            id: Artifact ID
+            db: Database session
+            
+        Returns:
+            Artifact with metadata and data
+        """
+        from fastapi import HTTPException
+        
+        # Validate artifact type
+        if artifact_type not in ["model", "dataset", "code"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid artifact type: {artifact_type}"
+            )
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact with ID {id} not found"
+            )
+        
+        # Check if artifact type matches
+        pkg_artifact_type = getattr(package, 'artifact_type', 'model')
+        if pkg_artifact_type != artifact_type:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact {id} is not of type {artifact_type}"
+            )
+        
+        # Return artifact with metadata and data
+        url = getattr(package, 'source_url', '')
+        if not url:
+            # Fallback to constructed URL if no source_url
+            url = f"https://huggingface.co/{package.name}"
+        
+        return Artifact(
+            metadata=ArtifactMetadata(
+                name=package.name,
+                id=str(package.id),
+                type=pkg_artifact_type
+            ),
+            data=ArtifactData(url=url)
+        )
+    
     return app
 
 
