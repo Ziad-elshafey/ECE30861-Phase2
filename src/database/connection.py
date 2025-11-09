@@ -1,7 +1,8 @@
 """Database connection management."""
 
 import os
-from sqlalchemy import create_engine
+import re
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
 
@@ -27,6 +28,29 @@ engine = create_engine(
     echo=bool(os.getenv("SQL_ECHO", "False").lower() == "true"),  # Log SQL queries if SQL_ECHO=true
     pool_pre_ping=True,  # Verify connections before using them
 )
+
+
+# Register REGEXP function for SQLite
+@event.listens_for(engine, "connect")
+def enable_sqlite_regexp(dbapi_connection, connection_record):
+    """
+    Enable REGEXP operator for SQLite.
+    
+    SQLite doesn't have built-in regex support, so we need to provide
+    a custom function using Python's re module.
+    """
+    if DATABASE_URL.startswith("sqlite"):
+        def regexp(pattern, value):
+            """Regex matching function for SQLite."""
+            if value is None or pattern is None:
+                return False
+            try:
+                return re.search(pattern, value, re.IGNORECASE) is not None
+            except re.error:
+                return False
+        
+        dbapi_connection.create_function("regexp", 2, regexp)
+
 
 # Create session factory
 SessionLocal = sessionmaker(

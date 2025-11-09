@@ -363,12 +363,12 @@ def list_packages(
     db: Session = Depends(get_db)
 ):
     """
-    List all packages with pagination and optional search.
+    List all packages with pagination and optional regex search.
     
     Args:
         page: Page number (1-indexed)
         page_size: Number of items per page
-        name_pattern: Optional regex pattern to filter by name
+        name_pattern: Optional regex pattern to filter by package name
         db: Database session
         
     Returns:
@@ -377,12 +377,24 @@ def list_packages(
     # Calculate offset
     offset = (page - 1) * page_size
     
-    # Get packages (TODO: implement name_pattern filtering in CRUD)
-    packages = crud.get_packages(db, skip=offset, limit=page_size)
+    # Get packages with regex filtering
+    packages = crud.get_packages(
+        db, 
+        skip=offset, 
+        limit=page_size,
+        name_filter=name_pattern,
+        use_regex=True if name_pattern else False
+    )
     
-    # Get total count (TODO: implement in CRUD)
-    # For now, just return what we have
-    total = len(packages)  # This is incorrect but works for skeleton
+    # Get total count with same filter
+    if name_pattern:
+        from src.database.models import Package
+        query = db.query(Package)
+        query = query.filter(Package.name.op('REGEXP')(name_pattern))
+        total = query.count()
+    else:
+        from src.database.models import Package
+        total = db.query(Package).count()
     
     return {
         "total": total,

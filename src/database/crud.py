@@ -201,13 +201,32 @@ def list_packages(
     db: Session,
     skip: int = 0,
     limit: int = 100,
-    name_filter: Optional[str] = None
+    name_filter: Optional[str] = None,
+    use_regex: bool = False
 ) -> List[Package]:
-    """List packages with optional filtering and pagination."""
+    """
+    List packages with optional filtering and pagination.
+    
+    Args:
+        db: Database session
+        skip: Number of records to skip (for pagination)
+        limit: Maximum number of records to return
+        name_filter: Filter pattern for package name
+        use_regex: If True, treat name_filter as regex pattern; if False, use SQL LIKE
+    
+    Returns:
+        List of packages matching the filter
+    """
     query = db.query(Package)
     
     if name_filter:
-        query = query.filter(Package.name.ilike(f"%{name_filter}%"))
+        if use_regex:
+            # Use regex pattern matching (SQLite REGEXP or PostgreSQL ~)
+            # For SQLite, we need to use the regexp function
+            query = query.filter(Package.name.op('REGEXP')(name_filter))
+        else:
+            # Use SQL LIKE for simple pattern matching
+            query = query.filter(Package.name.ilike(f"%{name_filter}%"))
     
     return query.offset(skip).limit(limit).all()
 
@@ -216,10 +235,11 @@ def get_packages(
     db: Session,
     skip: int = 0,
     limit: int = 100,
-    name_filter: Optional[str] = None
+    name_filter: Optional[str] = None,
+    use_regex: bool = False
 ) -> List[Package]:
     """Get packages with optional filtering and pagination (alias for list_packages)."""
-    return list_packages(db, skip=skip, limit=limit, name_filter=name_filter)
+    return list_packages(db, skip=skip, limit=limit, name_filter=name_filter, use_regex=use_regex)
 
 
 def delete_package(db: Session, package_id: int) -> bool:
