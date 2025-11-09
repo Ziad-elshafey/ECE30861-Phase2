@@ -1,14 +1,20 @@
 """Main FastAPI application factory."""
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import Optional
 
 from src.api.config import settings
 from src.api.routes import users, packages, ratings, system
 from src.database.connection import init_db, reset_db
 from src.database.init_db import create_default_user
+from src.api.dependencies import get_db, get_optional_user
+from src.database.models import Package
+from src.database import crud
 
 
 @asynccontextmanager
@@ -152,6 +158,22 @@ def create_app() -> FastAPI:
             Success message confirming system reset
         """
         try:
+            # Clean up physical storage artifacts
+            import shutil
+            from pathlib import Path
+            storage_path = Path("storage/artifacts")
+            if storage_path.exists():
+                # Remove all model files but keep the directory structure
+                models_path = storage_path / "models"
+                if models_path.exists():
+                    shutil.rmtree(models_path)
+                    models_path.mkdir(parents=True, exist_ok=True)
+                
+                # Reset metadata file
+                metadata_file = storage_path / "metadata.json"
+                if metadata_file.exists():
+                    metadata_file.write_text("{}")
+            
             # Reset database (drops all tables and recreates them)
             reset_db()
             
@@ -159,17 +181,165 @@ def create_app() -> FastAPI:
             create_default_user()
             
             return {
-                "message": "System reset successful",
-                "status": "ok"
+                "message": "Registry is reset",
             }
         except Exception as e:
             return JSONResponse(
                 status_code=500,
                 content={
                     "message": f"System reset failed: {str(e)}",
-                    "status": "error"
                 }
             )
+    
+    # Artifacts query endpoint (OpenAPI spec)
+    # Schemas
+    class ArtifactQuery(BaseModel):
+        """Query for artifacts."""
+        name: str
+        types: Optional[list[str]] = None
+
+    class ArtifactMetadata(BaseModel):
+        """Artifact metadata response."""
+        name: str
+        id: str
+        type: str
+
+    @app.post(
+        "/artifacts",
+        response_model=list[ArtifactMetadata],
+        tags=["artifacts"]
+    )
+    def query_artifacts(
+        queries: list[ArtifactQuery],
+        offset: Optional[str] = Query(None),
+        db: Session = Depends(get_db),
+    ):
+        """
+        Query artifacts from the registry.
+        Use name="*" to list all artifacts.
+        
+        Args:
+            queries: List of artifact queries
+            offset: Pagination offset
+            db: Database session
+            
+        Returns:
+            List of matching artifact metadata
+        """
+        results = []
+        
+        for query in queries:
+            if query.name == "*":
+                # List all artifacts
+                packages = crud.get_packages(db, skip=0, limit=1000)
+                for pkg in packages:
+                    artifact_type = getattr(pkg, 'artifact_type', 'model')
+                    results.append(
+                        ArtifactMetadata(
+                            name=pkg.name,
+                            id=str(pkg.id),
+                            type=artifact_type
+                        )
+                    )
+            else:
+                # Search by name
+                packages = db.query(Package).filter(
+                    Package.name.like(f"%{query.name}%")
+                ).all()
+                
+                for pkg in packages:
+                    artifact_type = getattr(pkg, 'artifact_type', 'model')
+                    if query.types and artifact_type not in query.types:
+                        continue
+                        
+                    results.append(
+                        ArtifactMetadata(
+                            name=pkg.name,
+                            id=str(pkg.id),
+                            type=artifact_type
+                        )
+                    )
+        
+        return results
+    
+    # Ingest artifact endpoint (OpenAPI spec)
+    class ArtifactData(BaseModel):
+        """Artifact data for ingest."""
+        url: str
+
+    class ArtifactIngestResponse(BaseModel):
+        """Response from artifact ingest."""
+        metadata: ArtifactMetadata
+        data: ArtifactData
+
+    @app.post(
+        "/artifact/{artifact_type}",
+        response_model=ArtifactIngestResponse,
+        status_code=201,
+        tags=["artifacts"]
+    )
+    async def ingest_artifact(
+        artifact_type: str,
+        artifact_data: ArtifactData,
+        db: Session = Depends(get_db),
+    ):
+        """
+        Ingest a new artifact from a URL.
+        
+        Args:
+            artifact_type: Type of artifact (model, dataset, code)
+            artifact_data: URL to artifact
+            db: Database session
+            
+        Returns:
+            Created artifact metadata and data
+        """
+        from src.ingest import validate_and_ingest
+        import uuid
+        
+        # Parse model name from URL
+        url = artifact_data.url
+        model_name = url.strip("/").split("/")[-2:]
+        model_name = "/".join(model_name) if len(model_name) == 2 else model_name[0]  # noqa: E501
+        
+        # Validate model against quality gate
+        passes_gate, validation_result = await validate_and_ingest(
+            model_name
+        )
+        
+        if not passes_gate:
+            # Quality gate failed - return 424
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=424,
+                detail={
+                    "message": "Artifact disqualified due to ratings",
+                    "failing_metrics": validation_result.get("failing_metrics")  # noqa: E501
+                }
+            )
+        
+        # Quality gate passed - create artifact entry
+        artifact_id = str(uuid.uuid4())
+        
+        # Store in database
+        from src.database import crud
+        package = crud.create_package(
+            db,
+            name=model_name,
+            version="1.0.0",
+            s3_key=artifact_id,
+            uploaded_by=1  # Default admin user
+        )
+        
+        # Return response
+        return ArtifactIngestResponse(
+            metadata=ArtifactMetadata(
+                name=model_name,
+                id=str(package.id),
+                type=artifact_type
+            ),
+            data=ArtifactData(url=url)
+        )
     
     return app
 
