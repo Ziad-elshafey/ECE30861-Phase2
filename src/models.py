@@ -33,7 +33,7 @@ class SizeScore(BaseModel):
 class MetricResult(BaseModel):
     # result of a single metric calculation
 
-    score: float = Field(..., ge=0.0, le=1.0)
+    score: float = Field(..., ge=-1.0, le=1.0)  # -1 for not applicable
     latency: int = Field(..., ge=0)  # milliseconds unit
 
 
