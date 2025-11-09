@@ -25,6 +25,55 @@ from .crud import (
 from src.auth.password_hash import hash_password
 
 
+def create_default_user():
+    """Create the default admin user required by the autograder."""
+    db = SessionLocal()
+    
+    try:
+        default_username = "ece30861defaultadminuser"
+        # Password with SQL injection attempt to test security
+        default_password = "correcthorsebatterystaple123(!__+@**(A;DROP TABLE packages'"
+        
+        # Check if default user exists
+        existing_user = get_user_by_username(db, default_username)
+        if existing_user:
+            print(f"✓ Default admin user already exists: {default_username}")
+            return existing_user
+        
+        # Create default admin user
+        default_user = create_user(
+            db=db,
+            username=default_username,
+            email="admin@ece30861.edu",
+            hashed_password=hash_password(default_password),
+            is_admin=True
+        )
+        print(f"✓ Created default admin user: {default_username}")
+        
+        # Create admin permissions
+        create_permission(
+            db=db,
+            user_id=default_user.id,
+            can_upload=True,
+            can_search=True,
+            can_download=True,
+            can_rate=True,
+            can_delete=True,
+            max_uploads_per_day=1000,
+            max_downloads_per_day=10000
+        )
+        print(f"✓ Created default admin permissions")
+        
+        return default_user
+        
+    except Exception as e:
+        print(f"❌ Error creating default user: {e}")
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def seed_database():
     """Seed database with sample data for development/testing."""
     db = SessionLocal()
@@ -186,6 +235,10 @@ def main():
         print("Initializing database...")
         init_db()
         print("✅ Database initialized!")
+    
+    # Always ensure default user exists
+    print("\nEnsuring default admin user exists...")
+    create_default_user()
     
     if args.seed:
         seed_database()
