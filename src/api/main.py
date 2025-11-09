@@ -65,8 +65,18 @@ def create_app() -> FastAPI:
             "name": settings.PROJECT_NAME,
             "version": settings.PROJECT_VERSION,
             "docs": "/docs",
-            "health": f"{settings.API_V1_PREFIX}/system/health"
+            "health": "/health"
         }
+    
+    # Health endpoint for autograder/monitoring (public, no auth required)
+    @app.get("/health", tags=["health"])
+    def health_check():
+        """
+        Simple health check endpoint for monitoring and autograder.
+        Always returns 200 OK with status 'ok'.
+        This is a public endpoint with no authentication required.
+        """
+        return {"status": "ok"}
     
     return app
 
