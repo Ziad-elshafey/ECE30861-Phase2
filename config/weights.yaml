@@ -1,12 +1,14 @@
 metric_weights:
   ramp_up_time: 0.15        # Weight for ease of getting started
-  bus_factor: 0.15          # Weight for contributor diversity
+  bus_factor: 0.10          # Weight for contributor diversity
   performance_claims: 0.10  # Weight for documented performance
   license: 0.15             # Weight for license compatibility
   size_score: 0.10          # Weight for deployment feasibility
   dataset_and_code_score: 0.15  # Weight for linked resources
   dataset_quality: 0.10     # Weight for dataset documentation
   code_quality: 0.10        # Weight for code structure and quality
+  reproducibility: 0.05     # Weight for reproducibility
+  reviewedness: 0.10        # Weight for code review practices
 
 # Thresholds and parameters for individual metrics
 thresholds:
@@ -60,3 +62,8 @@ thresholds:
     max_flake8_issues: 50
     min_test_coverage: 0.5
     typing_ratio_threshold: 0.3
+    
+  # Reviewedness thresholds
+  reviewedness:
+    min_reviewed_fraction: 0.5  # At least 50% code should be reviewed
+    pr_pattern_keywords: ["#", "PR", "Merge pull request"]

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Quality gate thresholds for ingest
 # All metrics must score >= 0.5 to pass
+# Note: reviewedness is optional (skipped if -1, i.e., no GitHub repo)
 INGEST_QUALITY_GATE_METRICS = {
     "reproducibility": 0.5,
     "code_quality": 0.5,
@@ -27,6 +28,7 @@ INGEST_QUALITY_GATE_METRICS = {
     "bus_factor": 0.5,
     "performance_claims": 0.5,
     "dataset_and_code_score": 0.5,
+    "reviewedness": 0.5,  # Optional: skipped if no GitHub repo
 }
 
 
@@ -121,6 +123,7 @@ class IngestValidator:
         Apply quality gate check to audit results.
 
         All metrics in INGEST_QUALITY_GATE_METRICS must be >= 0.5
+        Metrics with score -1 are skipped (not applicable, e.g., no GitHub)
 
         Args:
             audit_result: Scoring results from MetricScorer
@@ -135,13 +138,19 @@ class IngestValidator:
             score = getattr(audit_result, metric_name, None)
 
             if score is None:
-                logger.warning(f"Metric {metric_name} not found in audit result")
+                logger.warning(f"Metric {metric_name} not found in result")
                 failing_metrics.append({
                     "metric": metric_name,
                     "score": None,
                     "required": threshold,
                     "reason": "Metric not available"
                 })
+            elif score == -1:
+                # Skip metrics that are not applicable (e.g., no GitHub repo)
+                logger.debug(
+                    f"Skipping {metric_name}: not applicable (score=-1)"
+                )
+                continue
             elif isinstance(score, float) and score < threshold:
                 failing_metrics.append({
                     "metric": metric_name,
