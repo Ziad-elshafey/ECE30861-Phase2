@@ -213,7 +213,7 @@ def list_packages(
         db: Database session
         skip: Number of records to skip (for pagination)
         limit: Maximum number of records to return
-        name_filter: Filter pattern for package name
+        name_filter: Filter pattern for package name (and README when using regex)
         use_regex: If True, treat name_filter as regex pattern; if False, use SQL LIKE
     
     Returns:
@@ -223,9 +223,16 @@ def list_packages(
     
     if name_filter:
         if use_regex:
-            # Use regex pattern matching (SQLite REGEXP or PostgreSQL ~)
+            # Use regex pattern matching on both name and README content
             # For SQLite, we need to use the regexp function
-            query = query.filter(Package.name.op('REGEXP')(name_filter))
+            # Search in name OR readme_content
+            from sqlalchemy import or_
+            query = query.filter(
+                or_(
+                    Package.name.op('REGEXP')(name_filter),
+                    Package.readme_content.op('REGEXP')(name_filter)
+                )
+            )
         else:
             # Use SQL LIKE for simple pattern matching
             query = query.filter(Package.name.ilike(f"%{name_filter}%"))
