@@ -26,7 +26,7 @@ class CodeQualityMetric(BaseMetric):
     ) -> float:
         """Calculate code quality using lints, tests folder, and CI config."""
         if not context.code_repos:
-            return 0.4
+            return 0.5
 
         total_score = 0.0
         repos_analyzed = 0
@@ -49,7 +49,7 @@ class CodeQualityMetric(BaseMetric):
             git_inspector.cleanup()
 
         if repos_analyzed == 0:
-            return 0.4  # default
+            return 0.5  # default
 
         return total_score / repos_analyzed
 

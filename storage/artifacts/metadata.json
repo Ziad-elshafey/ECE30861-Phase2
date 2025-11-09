@@ -1,0 +1,50 @@
+{
+  "artifacts": [
+    {
+      "artifact_id": "1206f0fe-559a-410c-addf-a80db7156132",
+      "filename": "1206f0fe-559a-410c-addf-a80db7156132.zip",
+      "file_path": "storage\\artifacts\\models\\1206f0fe-559a-410c-addf-a80db7156132.zip",
+      "file_size_bytes": 22,
+      "stored_at": "2025-11-02T23:29:08.208881",
+      "metadata": {
+        "model_name": "google-bert/bert-base-uncased",
+        "source": "huggingface",
+        "scores": {
+          "reproducibility": 0.5,
+          "code_quality": 0.85,
+          "license": 1.0,
+          "dataset_quality": 1.0,
+          "ramp_up_time": 0.75,
+          "bus_factor": 1.0,
+          "performance_claims": 0.85,
+          "dataset_and_code_score": 1.0,
+          "net_score": 0.832
+        },
+        "uploaded_by": "testuser"
+      }
+    },
+    {
+      "artifact_id": "473b5ff3-8fd4-4169-a1fe-595828b91cca",
+      "filename": "473b5ff3-8fd4-4169-a1fe-595828b91cca.zip",
+      "file_path": "storage\\artifacts\\models\\473b5ff3-8fd4-4169-a1fe-595828b91cca.zip",
+      "file_size_bytes": 22,
+      "stored_at": "2025-11-02T23:29:36.590989",
+      "metadata": {
+        "model_name": "google-bert/bert-base-uncased",
+        "source": "huggingface",
+        "scores": {
+          "reproducibility": 0.5,
+          "code_quality": 0.85,
+          "license": 1.0,
+          "dataset_quality": 1.0,
+          "ramp_up_time": 0.75,
+          "bus_factor": 1.0,
+          "performance_claims": 0.85,
+          "dataset_and_code_score": 1.0,
+          "net_score": 0.832
+        },
+        "uploaded_by": "testuser"
+      }
+    }
+  ]
+}
