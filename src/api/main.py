@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Query, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -567,8 +567,9 @@ def create_app() -> FastAPI:
     
     # Ingest artifact endpoint (OpenAPI spec)
     class ArtifactData(BaseModel):
-        """Artifact data for ingest."""
+        """Artifact data for ingest and retrieval."""
         url: str
+        download_url: Optional[str] = None  # For GET endpoints
 
     class ArtifactIngestResponse(BaseModel):
         """Response from artifact ingest."""
@@ -600,14 +601,32 @@ def create_app() -> FastAPI:
         from src.ingest import validate_and_ingest
         import uuid
         
-        # Parse model name from URL
+        # Parse artifact name from URL
         url = artifact_data.url
-        model_name = url.strip("/").split("/")[-2:]
-        model_name = "/".join(model_name) if len(model_name) == 2 else model_name[0]  # noqa: E501
         
-        # Validate model against quality gate
+        # Extract full model identifier for validation (e.g., "owner/repo")
+        url_parts = url.strip("/").split("/")
+        
+        # For HuggingFace: "https://huggingface.co/owner/model" -> "owner/model"
+        # For GitHub: "https://github.com/owner/repo" -> "owner/repo"
+        if len(url_parts) >= 2:
+            full_model_name = "/".join(url_parts[-2:])
+        else:
+            full_model_name = url_parts[-1]
+        
+        # Remove .git suffix if present (for GitHub URLs)
+        if full_model_name.endswith('.git'):
+            full_model_name = full_model_name[:-4]
+        
+        # For storage: Extract just the artifact name (WITHOUT owner prefix)
+        # Per OpenAPI spec examples: "bert-base-uncased" not "google-bert/bert-base-uncased"
+        artifact_name = url_parts[-1]
+        if artifact_name.endswith('.git'):
+            artifact_name = artifact_name[:-4]
+        
+        # Validate artifact against quality gate (use full name for validation)
         passes_gate, validation_result = await validate_and_ingest(
-            model_name
+            full_model_name
         )
         
         if not passes_gate:
@@ -624,11 +643,11 @@ def create_app() -> FastAPI:
         # Quality gate passed - create artifact entry
         artifact_id = str(uuid.uuid4())
         
-        # Store in database
+        # Store in database (use artifact_name WITHOUT owner prefix)
         from src.database import crud
         package = crud.create_package(
             db,
-            name=model_name,
+            name=artifact_name,
             version="1.0.0",
             artifact_type=artifact_type,  # Pass the artifact type
             s3_key=artifact_id,
@@ -659,7 +678,7 @@ def create_app() -> FastAPI:
         # Return response (per OpenAPI spec - no scores in ingest response)
         return ArtifactIngestResponse(
             metadata=ArtifactMetadata(
-                name=model_name,
+                name=artifact_name,
                 id=str(package.id),
                 type=artifact_type
             ),
@@ -898,14 +917,82 @@ def create_app() -> FastAPI:
             # Fallback to constructed URL if no source_url
             url = f"https://huggingface.co/{package.name}"
         
+        # Build download URL (proxy to original source)
+        download_url = f"/download/{artifact_type}/{id}"
+        
         return Artifact(
             metadata=ArtifactMetadata(
                 name=package.name,
                 id=str(package.id),
                 type=pkg_artifact_type
             ),
-            data=ArtifactData(url=url)
+            data=ArtifactData(
+                url=url,
+                download_url=download_url
+            )
         )
+    
+    # Download endpoint - Proxy to original artifact source
+    @app.get(
+        "/download/{artifact_type}/{id}",
+        tags=["artifacts"]
+    )
+    def download_artifact(
+        artifact_type: str,
+        id: str,
+        db: Session = Depends(get_db)
+    ):
+        """
+        Download artifact by redirecting to original source.
+        
+        For now, this proxies to the original HuggingFace/GitHub URL.
+        In a full implementation, this would serve from S3 storage.
+        
+        Args:
+            artifact_type: Type of artifact (model, dataset, code)
+            id: Artifact ID
+            db: Database session
+            
+        Returns:
+            Redirect to artifact source URL
+        """
+        # Validate artifact type
+        if artifact_type not in ["model", "dataset", "code"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid artifact type: {artifact_type}"
+            )
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact not found: {id}"
+            )
+        
+        # Check if artifact type matches
+        pkg_artifact_type = getattr(package, 'artifact_type', 'model')
+        if pkg_artifact_type != artifact_type:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact {id} is not of type {artifact_type}"
+            )
+        
+        # Get source URL and redirect
+        url = getattr(package, 'source_url', '')
+        if not url:
+            url = f"https://huggingface.co/{package.name}"
+        
+        return RedirectResponse(url=url)
     
     return app
 
