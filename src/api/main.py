@@ -600,14 +600,32 @@ def create_app() -> FastAPI:
         from src.ingest import validate_and_ingest
         import uuid
         
-        # Parse model name from URL
+        # Parse artifact name from URL
         url = artifact_data.url
-        model_name = url.strip("/").split("/")[-2:]
-        model_name = "/".join(model_name) if len(model_name) == 2 else model_name[0]  # noqa: E501
         
-        # Validate model against quality gate
+        # Extract full model identifier for validation (e.g., "owner/repo")
+        url_parts = url.strip("/").split("/")
+        
+        # For HuggingFace: "https://huggingface.co/owner/model" -> "owner/model"
+        # For GitHub: "https://github.com/owner/repo" -> "owner/repo"
+        if len(url_parts) >= 2:
+            full_model_name = "/".join(url_parts[-2:])
+        else:
+            full_model_name = url_parts[-1]
+        
+        # Remove .git suffix if present (for GitHub URLs)
+        if full_model_name.endswith('.git'):
+            full_model_name = full_model_name[:-4]
+        
+        # For storage: Extract just the artifact name (WITHOUT owner prefix)
+        # Per OpenAPI spec examples: "bert-base-uncased" not "google-bert/bert-base-uncased"
+        artifact_name = url_parts[-1]
+        if artifact_name.endswith('.git'):
+            artifact_name = artifact_name[:-4]
+        
+        # Validate artifact against quality gate (use full name for validation)
         passes_gate, validation_result = await validate_and_ingest(
-            model_name
+            full_model_name
         )
         
         if not passes_gate:
@@ -624,11 +642,11 @@ def create_app() -> FastAPI:
         # Quality gate passed - create artifact entry
         artifact_id = str(uuid.uuid4())
         
-        # Store in database
+        # Store in database (use artifact_name WITHOUT owner prefix)
         from src.database import crud
         package = crud.create_package(
             db,
-            name=model_name,
+            name=artifact_name,
             version="1.0.0",
             artifact_type=artifact_type,  # Pass the artifact type
             s3_key=artifact_id,
@@ -659,7 +677,7 @@ def create_app() -> FastAPI:
         # Return response (per OpenAPI spec - no scores in ingest response)
         return ArtifactIngestResponse(
             metadata=ArtifactMetadata(
-                name=model_name,
+                name=artifact_name,
                 id=str(package.id),
                 type=artifact_type
             ),
