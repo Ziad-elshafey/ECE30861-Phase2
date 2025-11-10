@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Query, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -567,8 +567,9 @@ def create_app() -> FastAPI:
     
     # Ingest artifact endpoint (OpenAPI spec)
     class ArtifactData(BaseModel):
-        """Artifact data for ingest."""
+        """Artifact data for ingest and retrieval."""
         url: str
+        download_url: Optional[str] = None  # For GET endpoints
 
     class ArtifactIngestResponse(BaseModel):
         """Response from artifact ingest."""
@@ -916,14 +917,82 @@ def create_app() -> FastAPI:
             # Fallback to constructed URL if no source_url
             url = f"https://huggingface.co/{package.name}"
         
+        # Build download URL (proxy to original source)
+        download_url = f"/download/{artifact_type}/{id}"
+        
         return Artifact(
             metadata=ArtifactMetadata(
                 name=package.name,
                 id=str(package.id),
                 type=pkg_artifact_type
             ),
-            data=ArtifactData(url=url)
+            data=ArtifactData(
+                url=url,
+                download_url=download_url
+            )
         )
+    
+    # Download endpoint - Proxy to original artifact source
+    @app.get(
+        "/download/{artifact_type}/{id}",
+        tags=["artifacts"]
+    )
+    def download_artifact(
+        artifact_type: str,
+        id: str,
+        db: Session = Depends(get_db)
+    ):
+        """
+        Download artifact by redirecting to original source.
+        
+        For now, this proxies to the original HuggingFace/GitHub URL.
+        In a full implementation, this would serve from S3 storage.
+        
+        Args:
+            artifact_type: Type of artifact (model, dataset, code)
+            id: Artifact ID
+            db: Database session
+            
+        Returns:
+            Redirect to artifact source URL
+        """
+        # Validate artifact type
+        if artifact_type not in ["model", "dataset", "code"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid artifact type: {artifact_type}"
+            )
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact not found: {id}"
+            )
+        
+        # Check if artifact type matches
+        pkg_artifact_type = getattr(package, 'artifact_type', 'model')
+        if pkg_artifact_type != artifact_type:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact {id} is not of type {artifact_type}"
+            )
+        
+        # Get source URL and redirect
+        url = getattr(package, 'source_url', '')
+        if not url:
+            url = f"https://huggingface.co/{package.name}"
+        
+        return RedirectResponse(url=url)
     
     return app
 
