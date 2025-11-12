@@ -2,11 +2,19 @@
 
 import os
 import re
+from pathlib import Path
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
 
 from .models import Base
+
+# Load .env file if it exists (for local development and RDS connection)
+# COMMENTED OUT TO USE LOCAL SQLITE FOR TESTING
+# env_path = Path(__file__).parent.parent.parent / ".env"
+# if env_path.exists():
+#     load_dotenv(env_path)
 
 # Database URL from environment variable or default to SQLite for local development
 DATABASE_URL = os.getenv(

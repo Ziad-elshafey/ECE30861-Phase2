@@ -39,3 +39,4 @@ processing_log_*.txt
 dist/
 build/
 *.egg-info/
+.env
