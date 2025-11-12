@@ -1,7 +1,11 @@
 """Main FastAPI application factory."""
 
+import os
+import logging
+import time
+from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, Query, HTTPException, Header
+from fastapi import FastAPI, Depends, Query, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -16,18 +20,65 @@ from src.api.dependencies import get_db, get_optional_user
 from src.database.models import Package
 from src.database import crud
 
+# Configure comprehensive logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Optional S3 storage support
+try:
+    from src.storage_s3 import get_s3_storage
+    from src.model_downloader import ModelDownloader
+    S3_AVAILABLE = True
+except ImportError:
+    S3_AVAILABLE = False
+    logger.warning("S3 storage not available - boto3 not installed")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup and shutdown."""
     # Startup: Initialize database and create default user
-    print("🚀 Starting ML Registry API...")
+    logger.info("=" * 70)
+    logger.info("🚀 STARTING ML REGISTRY API")
+    logger.info("=" * 70)
+    
+    # Log database configuration
+    from src.database.connection import DATABASE_URL
+    if DATABASE_URL.startswith("postgresql"):
+        db_info = DATABASE_URL.split("@")[1] if "@" in DATABASE_URL else "RDS"
+        logger.info(f"� Database: PostgreSQL (RDS) - {db_info}")
+        logger.info("   ✅ Persistent storage enabled")
+    elif DATABASE_URL.startswith("sqlite"):
+        logger.warning("⚠️  Database: SQLite (ephemeral)")
+        logger.warning("   ❌ Data will be lost on restart!")
+    
+    # Log S3 configuration
+    s3_enabled = os.getenv("ENABLE_S3_STORAGE", "false").lower() == "true"
+    if s3_enabled:
+        bucket = os.getenv("S3_BUCKET_NAME", "unknown")
+        logger.info(f"☁️  S3 Storage: ENABLED - bucket={bucket}")
+    else:
+        logger.info("☁️  S3 Storage: DISABLED (using local storage)")
+    
+    logger.info("Initializing database tables...")
     init_db()
     create_default_user()
-    print("✅ Database initialized with default admin user")
+    logger.info("✅ Database initialized with default admin user")
+    logger.info("=" * 70)
+    
     yield
+    
     # Shutdown: Clean up resources if needed
-    print("🛑 Shutting down ML Registry API...")
+    logger.info("=" * 70)
+    logger.info("🛑 SHUTTING DOWN ML REGISTRY API")
+    logger.info("=" * 70)
 
 
 def create_app() -> FastAPI:
@@ -54,6 +105,51 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    # Add request logging middleware
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        """Log all HTTP requests with timing and response status."""
+        start_time = time.time()
+        request_id = f"{int(start_time * 1000)}"
+        
+        # Extract client info
+        client_ip = request.client.host if request.client else "unknown"
+        
+        # Log incoming request
+        logger.info(
+            f"📥 [{request_id}] {request.method} {request.url.path} "
+            f"from {client_ip}"
+        )
+        
+        # Log query parameters if present
+        if request.query_params:
+            logger.info(f"   Query params: {dict(request.query_params)}")
+        
+        try:
+            # Process request
+            response = await call_next(request)
+            
+            # Calculate duration
+            duration = time.time() - start_time
+            
+            # Log response with appropriate emoji
+            status_emoji = "✅" if response.status_code < 400 else "❌"
+            logger.info(
+                f"{status_emoji} [{request_id}] {request.method} "
+                f"{request.url.path} → {response.status_code} "
+                f"({duration:.3f}s)"
+            )
+            
+            return response
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(
+                f"💥 [{request_id}] {request.method} {request.url.path} "
+                f"→ EXCEPTION ({duration:.3f}s): {str(e)}"
+            )
+            raise
     
     # Include routers
     app.include_router(
@@ -387,6 +483,8 @@ def create_app() -> FastAPI:
         Returns:
             Success message confirming system reset
         """
+        logger.info("🔄 AUTOGRADER RESET: Resetting entire system...")
+        
         try:
             # Clean up physical storage artifacts
             import shutil
@@ -404,16 +502,21 @@ def create_app() -> FastAPI:
                 if metadata_file.exists():
                     metadata_file.write_text("{}")
             
+            logger.info("   Dropping and recreating database tables...")
             # Reset database (drops all tables and recreates them)
             reset_db()
             
+            logger.info("   Creating default admin user...")
             # Recreate the default admin user
             create_default_user()
+            
+            logger.info("✅ RESET COMPLETE: System is now in default state")
             
             return {
                 "message": "Registry is reset",
             }
         except Exception as e:
+            logger.error(f"❌ RESET FAILED: {str(e)}")
             return JSONResponse(
                 status_code=500,
                 content={
@@ -601,6 +704,9 @@ def create_app() -> FastAPI:
         from src.ingest import validate_and_ingest
         import uuid
         
+        # Log autograder request
+        logger.info(f"🔵 AUTOGRADER INGEST: type={artifact_type}, url={artifact_data.url}")
+        
         # Parse artifact name from URL
         url = artifact_data.url
         
@@ -625,12 +731,17 @@ def create_app() -> FastAPI:
             artifact_name = artifact_name[:-4]
         
         # Validate artifact against quality gate (use full name for validation)
+        logger.info(f"   Validating {full_model_name}...")
         passes_gate, validation_result = await validate_and_ingest(
             full_model_name
         )
         
         if not passes_gate:
             # Quality gate failed - return 424
+            logger.warning(
+                f"❌ QUALITY GATE FAILED: {artifact_name} - "
+                f"Failing metrics: {validation_result.get('failing_metrics')}"
+            )
             from fastapi import HTTPException
             raise HTTPException(
                 status_code=424,
@@ -641,6 +752,7 @@ def create_app() -> FastAPI:
             )
         
         # Quality gate passed - create artifact entry
+        logger.info(f"✅ QUALITY GATE PASSED: {artifact_name}")
         artifact_id = str(uuid.uuid4())
         
         # Store in database (use artifact_name WITHOUT owner prefix)
@@ -651,11 +763,67 @@ def create_app() -> FastAPI:
             version="1.0.0",
             artifact_type=artifact_type,  # Pass the artifact type
             s3_key=artifact_id,
-            s3_bucket="",  # Local storage, no S3
-            file_size_bytes=0,  # Will be updated later
+            s3_bucket="",  # Will be updated if S3 enabled
+            file_size_bytes=0,  # Will be updated if S3 enabled
             source_url=url,
             uploaded_by=1  # Default admin user
         )
+        
+        logger.info(
+            f"💾 STORED IN DB: id={package.id}, name={artifact_name}, "
+            f"type={artifact_type}"
+        )
+        
+        # S3 Upload (if enabled)
+        enable_s3 = os.getenv(
+            "ENABLE_S3_STORAGE",
+            "false"
+        ).lower() == "true"
+        
+        if enable_s3 and S3_AVAILABLE:
+            try:
+                logger.info(
+                    f"S3 enabled - downloading artifact {package.id}"
+                )
+                
+                # Download from HuggingFace
+                if artifact_type == "model" and "huggingface.co" in url:
+                    downloader = ModelDownloader()
+                    local_path = downloader.download_huggingface_model(
+                        full_model_name
+                    )
+                    
+                    # Upload to S3
+                    s3_storage = get_s3_storage()
+                    s3_prefix = f"{artifact_type}s/{package.id}"
+                    s3_key, file_size = s3_storage.upload_directory(
+                        local_path,
+                        s3_prefix,
+                        artifact_name
+                    )
+                    
+                    # Update database with S3 info
+                    package.s3_key = s3_key
+                    package.s3_bucket = s3_storage.bucket_name
+                    package.file_size_bytes = file_size
+                    db.commit()
+                    db.refresh(package)
+                    
+                    logger.info(
+                        f"Uploaded to S3: {s3_key} ({file_size} bytes)"
+                    )
+                else:
+                    logger.warning(
+                        f"S3 upload not implemented for "
+                        f"{artifact_type} from {url}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"S3 upload failed for artifact {package.id}: {e}"
+                )
+                # Don't fail the ingest - metadata is already stored
+        else:
+            logger.info("S3 storage disabled - storing metadata only")
         
         # Store the quality gate scores in database
         if validation_result and validation_result.get("all_scores"):
@@ -684,6 +852,91 @@ def create_app() -> FastAPI:
             ),
             data=ArtifactData(url=url)
         )
+    
+    # GET endpoints for listing artifacts by type
+    @app.get(
+        "/artifact/model",
+        response_model=list[ArtifactMetadata],
+        tags=["artifacts"]
+    )
+    def get_all_models(db: Session = Depends(get_db)):
+        """
+        Get all model artifacts.
+        
+        Returns:
+            List of all model artifact metadata
+        """
+        logger.info("🔍 AUTOGRADER: GET all models")
+        packages = db.query(Package).filter(
+            Package.artifact_type == "model"
+        ).all()
+        
+        result = [
+            ArtifactMetadata(
+                name=p.name,
+                id=str(p.id),
+                type="model"
+            )
+            for p in packages
+        ]
+        logger.info(f"✅ Found {len(result)} models")
+        return result
+    
+    @app.get(
+        "/artifact/code",
+        response_model=list[ArtifactMetadata],
+        tags=["artifacts"]
+    )
+    def get_all_code(db: Session = Depends(get_db)):
+        """
+        Get all code artifacts.
+        
+        Returns:
+            List of all code artifact metadata
+        """
+        logger.info("🔍 AUTOGRADER: GET all code")
+        packages = db.query(Package).filter(
+            Package.artifact_type == "code"
+        ).all()
+        
+        result = [
+            ArtifactMetadata(
+                name=p.name,
+                id=str(p.id),
+                type="code"
+            )
+            for p in packages
+        ]
+        logger.info(f"✅ Found {len(result)} code artifacts")
+        return result
+    
+    @app.get(
+        "/artifact/dataset",
+        response_model=list[ArtifactMetadata],
+        tags=["artifacts"]
+    )
+    def get_all_datasets(db: Session = Depends(get_db)):
+        """
+        Get all dataset artifacts.
+        
+        Returns:
+            List of all dataset artifact metadata
+        """
+        logger.info("🔍 AUTOGRADER: GET all datasets")
+        packages = db.query(Package).filter(
+            Package.artifact_type == "dataset"
+        ).all()
+        
+        result = [
+            ArtifactMetadata(
+                name=p.name,
+                id=str(p.id),
+                type="dataset"
+            )
+            for p in packages
+        ]
+        logger.info(f"✅ Found {len(result)} datasets")
+        return result
     
     # Rate endpoint - GET /artifact/model/{id}/rate (BASELINE)
     @app.get(
@@ -816,13 +1069,19 @@ def create_app() -> FastAPI:
         """
         from fastapi import HTTPException, Header
         
+        # Log autograder query
+        logger.info(f"🔍 AUTOGRADER QUERY byName: '{name}'")
+        
         # Note: OpenAPI spec says X-Authorization is required,
         # but we handle it optionally for testing purposes
         
         # Search for packages with this exact name
         packages = db.query(Package).filter(Package.name == name).all()
         
+        logger.info(f"   Found {len(packages)} package(s) matching '{name}'")
+        
         if not packages:
+            logger.warning(f"❌ NOT FOUND: No artifact with name '{name}'")
             raise HTTPException(
                 status_code=404,
                 detail=f"No artifact found with name: {name}"
@@ -838,6 +1097,10 @@ def create_app() -> FastAPI:
                     id=str(pkg.id),
                     type=artifact_type
                 )
+            )
+            logger.info(
+                f"   → Returning: id={pkg.id}, name={pkg.name}, "
+                f"type={artifact_type}"
             )
         
         return results
@@ -877,11 +1140,15 @@ def create_app() -> FastAPI:
         """
         from fastapi import HTTPException
         
+        # Log autograder query
+        logger.info(f"🔍 AUTOGRADER QUERY byId: type={artifact_type}, id={id}")
+        
         # Note: OpenAPI spec says X-Authorization is required,
         # but we handle it optionally for testing purposes
         
         # Validate artifact type
         if artifact_type not in ["model", "dataset", "code"]:
+            logger.warning(f"❌ INVALID TYPE: {artifact_type}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid artifact type: {artifact_type}"
@@ -891,6 +1158,7 @@ def create_app() -> FastAPI:
         try:
             package_id = int(id)
         except ValueError:
+            logger.warning(f"❌ INVALID ID FORMAT: {id}")
             raise HTTPException(
                 status_code=400,
                 detail="Invalid artifact ID format"
@@ -898,6 +1166,7 @@ def create_app() -> FastAPI:
         
         package = crud.get_package_by_id(db, package_id)
         if not package:
+            logger.warning(f"❌ NOT FOUND: No artifact with id={id}")
             raise HTTPException(
                 status_code=404,
                 detail=f"Artifact with ID {id} not found"
@@ -906,10 +1175,19 @@ def create_app() -> FastAPI:
         # Check if artifact type matches
         pkg_artifact_type = getattr(package, 'artifact_type', 'model')
         if pkg_artifact_type != artifact_type:
+            logger.warning(
+                f"❌ TYPE MISMATCH: id={id} is '{pkg_artifact_type}' "
+                f"not '{artifact_type}'"
+            )
             raise HTTPException(
                 status_code=404,
                 detail=f"Artifact {id} is not of type {artifact_type}"
             )
+        
+        logger.info(
+            f"   ✅ Found: id={package.id}, name={package.name}, "
+            f"type={pkg_artifact_type}"
+        )
         
         # Return artifact with metadata and data
         url = getattr(package, 'source_url', '')
@@ -932,7 +1210,7 @@ def create_app() -> FastAPI:
             )
         )
     
-    # Download endpoint - Proxy to original artifact source
+    # Download endpoint - Proxy to original source or S3
     @app.get(
         "/download/{artifact_type}/{id}",
         tags=["artifacts"]
@@ -943,10 +1221,10 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db)
     ):
         """
-        Download artifact by redirecting to original source.
+        Download artifact by redirecting to S3 or original source.
         
-        For now, this proxies to the original HuggingFace/GitHub URL.
-        In a full implementation, this would serve from S3 storage.
+        If S3 storage is enabled and artifact is in S3, returns presigned
+        URL. Otherwise, redirects to original HuggingFace/GitHub URL.
         
         Args:
             artifact_type: Type of artifact (model, dataset, code)
@@ -954,7 +1232,7 @@ def create_app() -> FastAPI:
             db: Database session
             
         Returns:
-            Redirect to artifact source URL
+            Redirect to artifact download URL
         """
         # Validate artifact type
         if artifact_type not in ["model", "dataset", "code"]:
@@ -987,11 +1265,35 @@ def create_app() -> FastAPI:
                 detail=f"Artifact {id} is not of type {artifact_type}"
             )
         
-        # Get source URL and redirect
+        # Check if S3 storage is enabled and artifact is in S3
+        enable_s3 = os.getenv(
+            "ENABLE_S3_STORAGE",
+            "false"
+        ).lower() == "true"
+        
+        if (enable_s3 and S3_AVAILABLE and
+                package.s3_key and package.s3_bucket):
+            try:
+                # Generate presigned S3 URL (valid for 1 hour)
+                s3_storage = get_s3_storage()
+                download_url = s3_storage.generate_download_url(
+                    package.s3_key,
+                    expiration=3600
+                )
+                logger.info(
+                    f"Generated S3 download URL for artifact {id}"
+                )
+                return RedirectResponse(url=download_url)
+            except Exception as e:
+                logger.error(f"Failed to generate S3 URL: {e}")
+                # Fall through to original URL
+        
+        # Fall back to original source URL
         url = getattr(package, 'source_url', '')
         if not url:
             url = f"https://huggingface.co/{package.name}"
         
+        logger.info(f"Redirecting to original URL for artifact {id}")
         return RedirectResponse(url=url)
     
     return app
