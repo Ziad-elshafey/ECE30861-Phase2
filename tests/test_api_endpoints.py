@@ -64,7 +64,7 @@ def create_test_user(username="testuser", password="password123", is_admin=False
         "/api/v1/user/login",
         json={
             "username": "ece30861defaultadminuser",
-            "password": r'''correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;'''
+            "password": '''correcthorsebatterystaple123(!__+@**(A'"`;DROP TABLE packages;'''
         }
     )
     
@@ -153,7 +153,7 @@ def test_system_reset():
         "/api/v1/user/login",
         json={
             "username": "ece30861defaultadminuser",
-            "password": r'''correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;'''
+            "password": '''correcthorsebatterystaple123(!__+@**(A'"`;DROP TABLE packages;'''
         }
     )
     assert login_response.status_code == 200
@@ -172,7 +172,7 @@ def test_register_user():
     # Login as admin
     admin_token = login_user(
         "ece30861defaultadminuser",
-        r'''correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;'''
+        '''correcthorsebatterystaple123(!__+@**(A'"`;DROP TABLE packages;'''
     )
     
     # Register new user
@@ -202,7 +202,7 @@ def test_register_duplicate_user():
     # Try to create another user with same username
     admin_token = login_user(
         "ece30861defaultadminuser",
-        r'''correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;'''
+        '''correcthorsebatterystaple123(!__+@**(A'"`;DROP TABLE packages;'''
     )
     
     response = client.post(
@@ -327,7 +327,7 @@ def test_delete_user_as_admin():
     create_test_user("victim")
     admin_token = login_user(
         "ece30861defaultadminuser",
-        r'''correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;'''
+        '''correcthorsebatterystaple123(!__+@**(A'"`;DROP TABLE packages;'''
     )
     
     response = client.delete(
@@ -498,7 +498,7 @@ def test_admin_can_delete_any_package():
     # Admin deletes it
     admin_token = login_user(
         "ece30861defaultadminuser",
-        r'''correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;'''
+        '''correcthorsebatterystaple123(!__+@**(A'"`;DROP TABLE packages;'''
     )
     response = client.delete(
         f"/api/v1/package/{package_id}",
@@ -652,7 +652,7 @@ def test_special_characters_in_password():
     
     admin_token = login_user(
         "ece30861defaultadminuser",
-        r'''correcthorsebatterystaple123(!__+@**(A'\"`;DROP TABLE artifacts;'''
+        '''correcthorsebatterystaple123(!__+@**(A'"`;DROP TABLE packages;'''
     )
     assert admin_token is not None
 
