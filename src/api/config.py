@@ -29,7 +29,7 @@ class Settings:
     
     # Default admin user (as per spec)
     DEFAULT_ADMIN_USERNAME: str = "ece30861defaultadminuser"
-    DEFAULT_ADMIN_PASSWORD: str = "correcthorsebatterystaple123(!__+@**(A;DROP TABLE packages"
+    DEFAULT_ADMIN_PASSWORD: str = 'correcthorsebatterystaple123(!__+@**(A\'"`;DROP TABLE artifacts;'
     DEFAULT_ADMIN_EMAIL: str = "admin@mlregistry.local"
 
 
