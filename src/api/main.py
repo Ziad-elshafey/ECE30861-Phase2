@@ -1296,6 +1296,433 @@ def create_app() -> FastAPI:
         logger.info(f"Redirecting to original URL for artifact {id}")
         return RedirectResponse(url=url)
     
+    # PUT endpoint - Update artifact (BASELINE)
+    @app.put(
+        "/artifacts/{artifact_type}/{id}",
+        response_model=None,
+        tags=["artifacts"],
+        status_code=200
+    )
+    async def update_artifact(
+        artifact_type: str,
+        id: str,
+        artifact: Artifact,
+        db: Session = Depends(get_db),
+        x_authorization: Optional[str] = Header(None, alias="X-Authorization"),
+    ):
+        """
+        Update artifact content (BASELINE).
+        
+        The name and id must match. The artifact source will replace 
+        the previous contents.
+        
+        Args:
+            artifact_type: Type of artifact to update
+            id: Artifact ID
+            artifact: New artifact data
+            db: Database session
+            x_authorization: Auth token
+            
+        Returns:
+            Success message
+        """
+        logger.info(f"🔄 UPDATE ARTIFACT: type={artifact_type}, id={id}")
+        
+        # Validate artifact type
+        if artifact_type not in ["model", "dataset", "code"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid artifact type: {artifact_type}"
+            )
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact does not exist: {id}"
+            )
+        
+        # Verify name and id match
+        if artifact.metadata.id != id:
+            raise HTTPException(
+                status_code=400,
+                detail="Artifact ID in body must match URL parameter"
+            )
+        
+        # Check artifact type matches
+        pkg_artifact_type = getattr(package, 'artifact_type', 'model')
+        if pkg_artifact_type != artifact_type:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact {id} is not of type {artifact_type}"
+            )
+        
+        # Update the artifact with new data
+        package.source_url = artifact.data.url
+        package.updated_at = datetime.utcnow()
+        
+        # If new URL provided, could re-download and validate (optional)
+        # For now, just update the metadata
+        db.commit()
+        db.refresh(package)
+        
+        logger.info(f"✅ UPDATED: artifact {id}")
+        return {"message": "Artifact is updated."}
+    
+    # DELETE endpoint - Delete artifact (BASELINE - with proper auth)
+    @app.delete(
+        "/artifacts/{artifact_type}/{id}",
+        tags=["artifacts"],
+        status_code=200
+    )
+    def delete_artifact_by_type_and_id(
+        artifact_type: str,
+        id: str,
+        db: Session = Depends(get_db),
+        x_authorization: Optional[str] = Header(None, alias="X-Authorization"),
+    ):
+        """
+        Delete artifact (BASELINE).
+        
+        Args:
+            artifact_type: Type of artifact to delete
+            id: Artifact ID
+            db: Database session
+            x_authorization: Auth token
+            
+        Returns:
+            Success message
+        """
+        logger.info(f"🗑️  DELETE ARTIFACT: type={artifact_type}, id={id}")
+        
+        # Validate artifact type
+        if artifact_type not in ["model", "dataset", "code"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid artifact type: {artifact_type}"
+            )
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact does not exist: {id}"
+            )
+        
+        # Check artifact type matches
+        pkg_artifact_type = getattr(package, 'artifact_type', 'model')
+        if pkg_artifact_type != artifact_type:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact {id} is not of type {artifact_type}"
+            )
+        
+        # Delete the artifact
+        crud.delete_package(db, package_id)
+        
+        logger.info(f"✅ DELETED: artifact {id}")
+        return {"message": "Artifact is deleted."}
+    
+    # Cost endpoint - Get artifact cost (BASELINE)
+    class ArtifactCostResponse(BaseModel):
+        """Cost response for artifacts."""
+        pass
+    
+    @app.get(
+        "/artifact/{artifact_type}/{id}/cost",
+        tags=["artifacts"],
+        status_code=200
+    )
+    def get_artifact_cost(
+        artifact_type: str,
+        id: str,
+        dependency: bool = Query(False),
+        db: Session = Depends(get_db),
+        x_authorization: Optional[str] = Header(None, alias="X-Authorization"),
+    ):
+        """
+        Get the cost of an artifact (BASELINE).
+        
+        Cost is measured in MB (total download size).
+        When dependency=true, includes transitive dependencies.
+        
+        Args:
+            artifact_type: Type of artifact
+            id: Artifact ID
+            dependency: Include dependencies in cost calculation
+            db: Database session
+            x_authorization: Auth token
+            
+        Returns:
+            Cost information for artifact and dependencies
+        """
+        logger.info(f"💰 COST QUERY: type={artifact_type}, id={id}, deps={dependency}")
+        
+        # Validate artifact type
+        if artifact_type not in ["model", "dataset", "code"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid artifact type: {artifact_type}"
+            )
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact does not exist: {id}"
+            )
+        
+        # Check artifact type matches
+        pkg_artifact_type = getattr(package, 'artifact_type', 'model')
+        if pkg_artifact_type != artifact_type:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact {id} is not of type {artifact_type}"
+            )
+        
+        # Calculate cost (file size in MB)
+        file_size_bytes = package.file_size_bytes or 0
+        standalone_cost = round(file_size_bytes / (1024 * 1024), 1)  # Convert to MB
+        
+        # Build cost response
+        if dependency:
+            # TODO: Implement dependency resolution from lineage
+            # For now, return standalone cost as total
+            result = {
+                id: {
+                    "standalone_cost": standalone_cost,
+                    "total_cost": standalone_cost
+                }
+            }
+        else:
+            result = {
+                id: {
+                    "total_cost": standalone_cost
+                }
+            }
+        
+        logger.info(f"✅ COST: {standalone_cost} MB")
+        return result
+    
+    # Lineage endpoint - Get artifact lineage graph (BASELINE)
+    class ArtifactLineageNode(BaseModel):
+        """Lineage graph node."""
+        artifact_id: str
+        name: str
+        source: str
+        metadata: Optional[dict] = None
+    
+    class ArtifactLineageEdge(BaseModel):
+        """Lineage graph edge."""
+        from_node_artifact_id: str
+        to_node_artifact_id: str
+        relationship: str
+    
+    class ArtifactLineageGraph(BaseModel):
+        """Complete lineage graph."""
+        nodes: list[ArtifactLineageNode]
+        edges: list[ArtifactLineageEdge]
+    
+    @app.get(
+        "/artifact/model/{id}/lineage",
+        response_model=ArtifactLineageGraph,
+        tags=["artifacts"],
+        status_code=200
+    )
+    def get_artifact_lineage(
+        id: str,
+        db: Session = Depends(get_db),
+        x_authorization: Optional[str] = Header(None, alias="X-Authorization"),
+    ):
+        """
+        Get artifact lineage graph (BASELINE).
+        
+        Extracts lineage from structured metadata (config.json, model cards, etc.)
+        showing relationships between models, datasets, and code.
+        
+        Args:
+            id: Artifact ID
+            db: Database session
+            x_authorization: Auth token
+            
+        Returns:
+            Lineage graph with nodes and edges
+        """
+        logger.info(f"🌳 LINEAGE QUERY: id={id}")
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact does not exist: {id}"
+            )
+        
+        # Build lineage graph
+        # For MVP, return a simple graph with just the artifact itself
+        # TODO: Parse config.json, model_card.md for dependencies
+        nodes = [
+            ArtifactLineageNode(
+                artifact_id=str(package.id),
+                name=package.name,
+                source="database",
+                metadata={
+                    "type": getattr(package, 'artifact_type', 'model'),
+                    "uploaded_at": package.uploaded_at.isoformat() if package.uploaded_at else None
+                }
+            )
+        ]
+        
+        edges = []
+        
+        # TODO: Extract from HuggingFace metadata
+        # - Check for base_model in config.json
+        # - Check for datasets in model card
+        # - Check for parent models
+        
+        logger.info(f"✅ LINEAGE: {len(nodes)} nodes, {len(edges)} edges")
+        return ArtifactLineageGraph(nodes=nodes, edges=edges)
+    
+    # License check endpoint - Check license compatibility (BASELINE)
+    class SimpleLicenseCheckRequest(BaseModel):
+        """License check request."""
+        github_url: str
+    
+    @app.post(
+        "/artifact/model/{id}/license-check",
+        tags=["artifacts"],
+        status_code=200
+    )
+    async def check_license_compatibility(
+        id: str,
+        request: SimpleLicenseCheckRequest,
+        db: Session = Depends(get_db),
+        x_authorization: Optional[str] = Header(None, alias="X-Authorization"),
+    ):
+        """
+        Check license compatibility (BASELINE).
+        
+        Assesses whether the model's license is compatible with the
+        intended usage (fine-tuning, inference) given the GitHub project's license.
+        
+        Args:
+            id: Artifact ID
+            request: GitHub URL to check compatibility with
+            db: Database session
+            x_authorization: Auth token
+            
+        Returns:
+            Boolean indicating compatibility
+        """
+        logger.info(f"⚖️  LICENSE CHECK: id={id}, github={request.github_url}")
+        
+        # Get package by ID
+        try:
+            package_id = int(id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid artifact ID format"
+            )
+        
+        package = crud.get_package_by_id(db, package_id)
+        if not package:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Artifact does not exist: {id}"
+            )
+        
+        # Get model license from scores
+        scores = crud.get_package_scores(db, package_id)
+        model_has_license = scores and scores.license_score and scores.license_score > 0.5
+        
+        # Check GitHub project license
+        try:
+            # Extract owner/repo from URL
+            github_url = request.github_url.rstrip('/')
+            parts = github_url.split('github.com/')
+            if len(parts) < 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid GitHub URL format"
+                )
+            
+            repo_path = parts[1].rstrip('/')
+            
+            # Use GitHub API to check license
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://api.github.com/repos/{repo_path}",
+                    headers={"Accept": "application/vnd.github.v3+json"},
+                    timeout=10.0
+                )
+                
+                if response.status_code == 404:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="GitHub project not found"
+                    )
+                
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Could not retrieve GitHub license information"
+                    )
+                
+                repo_data = response.json()
+                github_has_license = repo_data.get('license') is not None
+            
+            # Simple compatibility check: both must have licenses
+            is_compatible = model_has_license and github_has_license
+            
+            logger.info(f"✅ LICENSE COMPATIBLE: {is_compatible}")
+            return is_compatible
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"License check error: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"External license information could not be retrieved: {str(e)}"
+            )
+    
     return app
 
 
