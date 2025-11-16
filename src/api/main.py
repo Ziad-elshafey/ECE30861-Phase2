@@ -453,7 +453,7 @@ def create_app() -> FastAPI:
         
         # Log the authentication attempt with password for debugging
         logger.info(f"🔐 AUTH ATTEMPT: user={auth_request.user.name}, is_admin={auth_request.user.is_admin}")
-        logger.info(f"🔑 PASSWORD RECEIVED: {auth_request.secret.password[:20]}... (length: {len(auth_request.secret.password)})")
+        logger.info(f"🔑 PASSWORD RECEIVED: {auth_request.secret.password} (length: {len(auth_request.secret.password)})")
         
         # Get user from database
         user = crud.get_user_by_username(db, auth_request.user.name)
