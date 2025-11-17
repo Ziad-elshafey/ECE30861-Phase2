@@ -18,7 +18,9 @@ EXPOSE 8000
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV DATABASE_URL=sqlite:///./ml_registry.db
+
+# DATABASE_URL should be set in AWS App Runner configuration
+# Format: postgresql://username:password@host:port/database
 
 # Run the FastAPI application
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
