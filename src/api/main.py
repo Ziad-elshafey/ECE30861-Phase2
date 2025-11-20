@@ -734,23 +734,60 @@ def create_app() -> FastAPI:
         if artifact_name.endswith('.git'):
             artifact_name = artifact_name[:-4]
         
+        # Check if artifact already exists (per OpenAPI spec: 409 Conflict)
+        from src.database import crud
+        from sqlalchemy.exc import IntegrityError
+        
+        existing_package = crud.get_package_by_name_version(
+            db, name=artifact_name, version="1.0.0"
+        )
+        
+        if existing_package:
+            logger.info(
+                f"⚠️  DUPLICATE ARTIFACT: {artifact_name} "
+                f"(id={existing_package.id}) already exists"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "conflict",
+                    "message": (
+                        f"{artifact_type} '{artifact_name}' already exists"
+                    ),
+                    "package_id": existing_package.id
+                }
+            )
+        
         # Store metadata in database FIRST (before quality gate check)
         # This ensures all ingestion attempts are tracked
-        from src.database import crud
         artifact_id = str(uuid.uuid4())
-        package = crud.create_package(
-            db,
-            name=artifact_name,
-            version="1.0.0",
-            artifact_type=artifact_type,
-            s3_key=artifact_id,
-            s3_bucket="",
-            file_size_bytes=0,
-            source_url=url,
-            uploaded_by=1  # Default admin user
-        )
-        db.commit()
-        db.refresh(package)
+        try:
+            package = crud.create_package(
+                db,
+                name=artifact_name,
+                version="1.0.0",
+                artifact_type=artifact_type,
+                s3_key=artifact_id,
+                s3_bucket="",
+                file_size_bytes=0,
+                source_url=url,
+                uploaded_by=1  # Default admin user
+            )
+            db.commit()
+            db.refresh(package)
+        except IntegrityError:
+            db.rollback()
+            logger.warning(
+                f"⚠️  DUPLICATE ARTIFACT (race condition): {artifact_name}"
+            )
+            msg = f"{artifact_type} '{artifact_name}' already exists"
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "conflict",
+                    "message": msg
+                }
+            )
         
         logger.info(
             f"💾 STORED METADATA IN DB: id={package.id}, "
