@@ -554,7 +554,7 @@ def create_app() -> FastAPI:
         """
         Query artifacts from the registry.
         Use name="*" to list all artifacts.
-        Supports regex patterns for name matching.
+        Use exact name to find single artifact, or use types filter.
         
         Args:
             queries: List of artifact queries
@@ -570,38 +570,25 @@ def create_app() -> FastAPI:
         for query in queries:
             if query.name == "*":
                 # List all artifacts
-                packages = crud.get_packages(db, skip=0, limit=1000)
-                for pkg in packages:
-                    artifact_type = getattr(pkg, 'artifact_type', 'model')
-                    results.append(
-                        ArtifactMetadata(
-                            name=pkg.name,
-                            id=str(pkg.id),
-                            type=artifact_type
-                        )
-                    )
+                packages = db.query(Package).limit(1000).all()
             else:
-                # Search by name with regex support
-                packages = crud.get_packages(
-                    db, 
-                    skip=0, 
-                    limit=1000,
-                    name_filter=query.name,
-                    use_regex=True
-                )
-                
-                for pkg in packages:
-                    artifact_type = getattr(pkg, 'artifact_type', 'model')
-                    if query.types and artifact_type not in query.types:
-                        continue
-                        
-                    results.append(
-                        ArtifactMetadata(
-                            name=pkg.name,
-                            id=str(pkg.id),
-                            type=artifact_type
-                        )
+                # Exact name match (per TA requirement)
+                packages = db.query(Package).filter(
+                    Package.name == query.name
+                ).all()
+            
+            for pkg in packages:
+                artifact_type = getattr(pkg, 'artifact_type', 'model')
+                if query.types and artifact_type not in query.types:
+                    continue
+                    
+                results.append(
+                    ArtifactMetadata(
+                        name=pkg.name,
+                        id=str(pkg.id),
+                        type=artifact_type
                     )
+                )
         
         return results
     
@@ -635,42 +622,44 @@ def create_app() -> FastAPI:
             HTTPException 400: Invalid regex pattern
             HTTPException 404: No artifacts found
         """
+        import re
+        from fastapi import HTTPException
+        from src.database.models import Package
+        
         try:
-            # Search packages using regex
-            packages = crud.get_packages(
-                db,
-                skip=0,
-                limit=1000,
-                name_filter=regex_query.regex,
-                use_regex=True
-            )
-            
-            if not packages:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No artifact found under this regex."
-                )
-            
-            results = []
-            for pkg in packages:
-                artifact_type = getattr(pkg, 'artifact_type', 'model')
-                results.append(
-                    ArtifactMetadata(
-                        name=pkg.name,
-                        id=str(pkg.id),
-                        type=artifact_type
-                    )
-                )
-            
-            return results
-            
-        except HTTPException:
-            raise
-        except Exception as e:
+            # Compile regex pattern
+            pattern = re.compile(regex_query.regex)
+        except re.error as e:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid regex pattern: {str(e)}"
             )
+        
+        # Search packages using regex on Python side
+        all_packages = db.query(Package).limit(1000).all()
+        packages = [
+            p for p in all_packages
+            if pattern.search(p.name)
+        ]
+        
+        if not packages:
+            raise HTTPException(
+                status_code=404,
+                detail="No artifact found under this regex."
+            )
+        
+        results = []
+        for pkg in packages:
+            artifact_type = getattr(pkg, 'artifact_type', 'model')
+            results.append(
+                ArtifactMetadata(
+                    name=pkg.name,
+                    id=str(pkg.id),
+                    type=artifact_type
+                )
+            )
+        
+        return results
     
     # Ingest artifact endpoint (OpenAPI spec)
     class ArtifactData(BaseModel):
