@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
     from src.database.connection import DATABASE_URL
     if DATABASE_URL.startswith("postgresql"):
         db_info = DATABASE_URL.split("@")[1] if "@" in DATABASE_URL else "RDS"
-        logger.info(f"� Database: PostgreSQL (RDS) - {db_info}")
+        logger.info(f"  Database: PostgreSQL (RDS) - {db_info}")
         logger.info("   ✅ Persistent storage enabled")
     elif DATABASE_URL.startswith("sqlite"):
         logger.warning("⚠️  Database: SQLite (ephemeral)")
@@ -734,16 +734,40 @@ def create_app() -> FastAPI:
         if artifact_name.endswith('.git'):
             artifact_name = artifact_name[:-4]
         
-        # Validate artifact against quality gate (use full name for validation)
+        # Store metadata in database FIRST (before quality gate check)
+        # This ensures all ingestion attempts are tracked
+        from src.database import crud
+        artifact_id = str(uuid.uuid4())
+        package = crud.create_package(
+            db,
+            name=artifact_name,
+            version="1.0.0",
+            artifact_type=artifact_type,
+            s3_key=artifact_id,
+            s3_bucket="",
+            file_size_bytes=0,
+            source_url=url,
+            uploaded_by=1  # Default admin user
+        )
+        db.commit()
+        db.refresh(package)
+        
+        logger.info(
+            f"💾 STORED METADATA IN DB: id={package.id}, "
+            f"name={artifact_name}, type={artifact_type}"
+        )
+        
+        # Now validate artifact against quality gate
         logger.info(f"   Validating {full_model_name}...")
         passes_gate, validation_result = await validate_and_ingest(
             full_model_name
         )
         
         if not passes_gate:
-            # Quality gate failed - return 424
+            # Quality gate failed - return 424 but metadata already stored
             logger.warning(
-                f"❌ QUALITY GATE FAILED: {artifact_name} - "
+                f"❌ QUALITY GATE FAILED: {artifact_name} "
+                f"(id={package.id}) - "
                 f"Failing metrics: {validation_result.get('failing_metrics')}"
             )
             from fastapi import HTTPException
@@ -751,32 +775,15 @@ def create_app() -> FastAPI:
                 status_code=424,
                 detail={
                     "message": "Artifact disqualified due to ratings",
-                    "failing_metrics": validation_result.get("failing_metrics")  # noqa: E501
+                    "failing_metrics": validation_result.get(
+                        "failing_metrics"
+                    ),
+                    "package_id": package.id,
                 }
             )
         
-        # Quality gate passed - create artifact entry
+        # Quality gate passed - proceed with storage and scoring
         logger.info(f"✅ QUALITY GATE PASSED: {artifact_name}")
-        artifact_id = str(uuid.uuid4())
-        
-        # Store in database (use artifact_name WITHOUT owner prefix)
-        from src.database import crud
-        package = crud.create_package(
-            db,
-            name=artifact_name,
-            version="1.0.0",
-            artifact_type=artifact_type,  # Pass the artifact type
-            s3_key=artifact_id,
-            s3_bucket="",  # Will be updated if S3 enabled
-            file_size_bytes=0,  # Will be updated if S3 enabled
-            source_url=url,
-            uploaded_by=1  # Default admin user
-        )
-        
-        logger.info(
-            f"💾 STORED IN DB: id={package.id}, name={artifact_name}, "
-            f"type={artifact_type}"
-        )
         
         # S3 Upload (if enabled)
         enable_s3 = os.getenv(
@@ -846,6 +853,15 @@ def create_app() -> FastAPI:
                 reviewedness=scores.get("reviewedness", 0.0),
                 net_score=scores.get("net_score", 0.0)
             )
+        
+        # Commit the scores and finalize
+        db.commit()
+        db.refresh(package)
+        
+        logger.info(
+            f"✅ INGESTION COMPLETE: id={package.id}, "
+            f"name={artifact_name}"
+        )
         
         # Return response (per OpenAPI spec - no scores in ingest response)
         return ArtifactIngestResponse(
