@@ -538,7 +538,7 @@ def create_app() -> FastAPI:
     class ArtifactMetadata(BaseModel):
         """Artifact metadata response."""
         name: str
-        id: str
+        id: int
         type: str
 
     @app.post(
@@ -577,7 +577,7 @@ def create_app() -> FastAPI:
                     results.append(
                         ArtifactMetadata(
                             name=pkg.name,
-                            id=str(pkg.id),
+                            id=pkg.id,
                             type=artifact_type
                         )
                     )
@@ -608,7 +608,7 @@ def create_app() -> FastAPI:
                     results.append(
                         ArtifactMetadata(
                             name=pkg.name,
-                            id=str(pkg.id),
+                            id=pkg.id,
                             type=artifact_type
                         )
                     )
@@ -667,7 +667,7 @@ def create_app() -> FastAPI:
                 results.append(
                     ArtifactMetadata(
                         name=pkg.name,
-                        id=str(pkg.id),
+                        id=pkg.id,
                         type=artifact_type
                     )
                 )
@@ -1108,7 +1108,7 @@ def create_app() -> FastAPI:
             results.append(
                 ArtifactMetadata(
                     name=pkg.name,
-                    id=str(pkg.id),
+                    id=pkg.id,
                     type=artifact_type
                 )
             )
