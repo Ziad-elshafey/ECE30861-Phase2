@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
     from src.database.connection import DATABASE_URL
     if DATABASE_URL.startswith("postgresql"):
         db_info = DATABASE_URL.split("@")[1] if "@" in DATABASE_URL else "RDS"
-        logger.info(f"  Database: PostgreSQL (RDS) - {db_info}")
+        logger.info(f"� Database: PostgreSQL (RDS) - {db_info}")
         logger.info("   ✅ Persistent storage enabled")
     elif DATABASE_URL.startswith("sqlite"):
         logger.warning("⚠️  Database: SQLite (ephemeral)")
@@ -554,7 +554,7 @@ def create_app() -> FastAPI:
         """
         Query artifacts from the registry.
         Use name="*" to list all artifacts.
-        Use exact name to find single artifact, or use types filter.
+        Supports regex patterns for name matching.
         
         Args:
             queries: List of artifact queries
@@ -570,25 +570,38 @@ def create_app() -> FastAPI:
         for query in queries:
             if query.name == "*":
                 # List all artifacts
-                packages = db.query(Package).limit(1000).all()
-            else:
-                # Exact name match (per TA requirement)
-                packages = db.query(Package).filter(
-                    Package.name == query.name
-                ).all()
-            
-            for pkg in packages:
-                artifact_type = getattr(pkg, 'artifact_type', 'model')
-                if query.types and artifact_type not in query.types:
-                    continue
-                    
-                results.append(
-                    ArtifactMetadata(
-                        name=pkg.name,
-                        id=str(pkg.id),
-                        type=artifact_type
+                packages = crud.get_packages(db, skip=0, limit=1000)
+                for pkg in packages:
+                    artifact_type = getattr(pkg, 'artifact_type', 'model')
+                    results.append(
+                        ArtifactMetadata(
+                            name=pkg.name,
+                            id=str(pkg.id),
+                            type=artifact_type
+                        )
                     )
+            else:
+                # Search by name with regex support
+                packages = crud.get_packages(
+                    db, 
+                    skip=0, 
+                    limit=1000,
+                    name_filter=query.name,
+                    use_regex=True
                 )
+                
+                for pkg in packages:
+                    artifact_type = getattr(pkg, 'artifact_type', 'model')
+                    if query.types and artifact_type not in query.types:
+                        continue
+                        
+                    results.append(
+                        ArtifactMetadata(
+                            name=pkg.name,
+                            id=str(pkg.id),
+                            type=artifact_type
+                        )
+                    )
         
         return results
     
@@ -622,44 +635,42 @@ def create_app() -> FastAPI:
             HTTPException 400: Invalid regex pattern
             HTTPException 404: No artifacts found
         """
-        import re
-        from fastapi import HTTPException
-        from src.database.models import Package
-        
         try:
-            # Compile regex pattern
-            pattern = re.compile(regex_query.regex)
-        except re.error as e:
+            # Search packages using regex
+            packages = crud.get_packages(
+                db,
+                skip=0,
+                limit=1000,
+                name_filter=regex_query.regex,
+                use_regex=True
+            )
+            
+            if not packages:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No artifact found under this regex."
+                )
+            
+            results = []
+            for pkg in packages:
+                artifact_type = getattr(pkg, 'artifact_type', 'model')
+                results.append(
+                    ArtifactMetadata(
+                        name=pkg.name,
+                        id=str(pkg.id),
+                        type=artifact_type
+                    )
+                )
+            
+            return results
+            
+        except HTTPException:
+            raise
+        except Exception as e:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid regex pattern: {str(e)}"
             )
-        
-        # Search packages using regex on Python side
-        all_packages = db.query(Package).limit(1000).all()
-        packages = [
-            p for p in all_packages
-            if pattern.search(p.name)
-        ]
-        
-        if not packages:
-            raise HTTPException(
-                status_code=404,
-                detail="No artifact found under this regex."
-            )
-        
-        results = []
-        for pkg in packages:
-            artifact_type = getattr(pkg, 'artifact_type', 'model')
-            results.append(
-                ArtifactMetadata(
-                    name=pkg.name,
-                    id=str(pkg.id),
-                    type=artifact_type
-                )
-            )
-        
-        return results
     
     # Ingest artifact endpoint (OpenAPI spec)
     class ArtifactData(BaseModel):
@@ -723,77 +734,16 @@ def create_app() -> FastAPI:
         if artifact_name.endswith('.git'):
             artifact_name = artifact_name[:-4]
         
-        # Check if artifact already exists (per OpenAPI spec: 409 Conflict)
-        from src.database import crud
-        from sqlalchemy.exc import IntegrityError
-        
-        existing_package = crud.get_package_by_name_version(
-            db, name=artifact_name, version="1.0.0"
-        )
-        
-        if existing_package:
-            logger.info(
-                f"⚠️  DUPLICATE ARTIFACT: {artifact_name} "
-                f"(id={existing_package.id}) already exists"
-            )
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "status": "conflict",
-                    "message": (
-                        f"{artifact_type} '{artifact_name}' already exists"
-                    ),
-                    "package_id": existing_package.id
-                }
-            )
-        
-        # Store metadata in database FIRST (before quality gate check)
-        # This ensures all ingestion attempts are tracked
-        artifact_id = str(uuid.uuid4())
-        try:
-            package = crud.create_package(
-                db,
-                name=artifact_name,
-                version="1.0.0",
-                artifact_type=artifact_type,
-                s3_key=artifact_id,
-                s3_bucket="",
-                file_size_bytes=0,
-                source_url=url,
-                uploaded_by=1  # Default admin user
-            )
-            db.commit()
-            db.refresh(package)
-        except IntegrityError:
-            db.rollback()
-            logger.warning(
-                f"⚠️  DUPLICATE ARTIFACT (race condition): {artifact_name}"
-            )
-            msg = f"{artifact_type} '{artifact_name}' already exists"
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "status": "conflict",
-                    "message": msg
-                }
-            )
-        
-        logger.info(
-            f"💾 STORED METADATA IN DB: id={package.id}, "
-            f"name={artifact_name}, type={artifact_type}"
-        )
-        
-        # Now validate artifact against quality gate
+        # Validate artifact against quality gate (use full name for validation)
         logger.info(f"   Validating {full_model_name}...")
         passes_gate, validation_result = await validate_and_ingest(
             full_model_name
         )
         
         if not passes_gate:
-            # Quality gate failed - return 424 but metadata already stored
+            # Quality gate failed - return 424
             logger.warning(
-                f"❌ QUALITY GATE FAILED: {artifact_name} "
-                f"(id={package.id}) - "
+                f"❌ QUALITY GATE FAILED: {artifact_name} - "
                 f"Failing metrics: {validation_result.get('failing_metrics')}"
             )
             from fastapi import HTTPException
@@ -801,15 +751,32 @@ def create_app() -> FastAPI:
                 status_code=424,
                 detail={
                     "message": "Artifact disqualified due to ratings",
-                    "failing_metrics": validation_result.get(
-                        "failing_metrics"
-                    ),
-                    "package_id": package.id,
+                    "failing_metrics": validation_result.get("failing_metrics")  # noqa: E501
                 }
             )
         
-        # Quality gate passed - proceed with storage and scoring
+        # Quality gate passed - create artifact entry
         logger.info(f"✅ QUALITY GATE PASSED: {artifact_name}")
+        artifact_id = str(uuid.uuid4())
+        
+        # Store in database (use artifact_name WITHOUT owner prefix)
+        from src.database import crud
+        package = crud.create_package(
+            db,
+            name=artifact_name,
+            version="1.0.0",
+            artifact_type=artifact_type,  # Pass the artifact type
+            s3_key=artifact_id,
+            s3_bucket="",  # Will be updated if S3 enabled
+            file_size_bytes=0,  # Will be updated if S3 enabled
+            source_url=url,
+            uploaded_by=1  # Default admin user
+        )
+        
+        logger.info(
+            f"💾 STORED IN DB: id={package.id}, name={artifact_name}, "
+            f"type={artifact_type}"
+        )
         
         # S3 Upload (if enabled)
         enable_s3 = os.getenv(
@@ -879,15 +846,6 @@ def create_app() -> FastAPI:
                 reviewedness=scores.get("reviewedness", 0.0),
                 net_score=scores.get("net_score", 0.0)
             )
-        
-        # Commit the scores and finalize
-        db.commit()
-        db.refresh(package)
-        
-        logger.info(
-            f"✅ INGESTION COMPLETE: id={package.id}, "
-            f"name={artifact_name}"
-        )
         
         # Return response (per OpenAPI spec - no scores in ingest response)
         return ArtifactIngestResponse(
