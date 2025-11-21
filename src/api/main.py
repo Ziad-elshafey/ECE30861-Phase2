@@ -554,7 +554,8 @@ def create_app() -> FastAPI:
         """
         Query artifacts from the registry.
         Use name="*" to list all artifacts.
-        Supports regex patterns for name matching.
+        Tries exact name match first (per autograder expectations) then
+        falls back to regex search if no exact results are found.
         
         Args:
             queries: List of artifact queries
@@ -581,14 +582,23 @@ def create_app() -> FastAPI:
                         )
                     )
             else:
-                # Search by name with regex support
-                packages = crud.get_packages(
-                    db, 
-                    skip=0, 
-                    limit=1000,
-                    name_filter=query.name,
-                    use_regex=True
+                # Try exact match first so we do not return substring hits
+                packages = (
+                    db.query(Package)
+                    .filter(Package.name == query.name)
+                    .all()
                 )
+                
+                # Fall back to regex/pattern search only if we did not
+                # find any exact matches so legacy behavior still works.
+                if not packages:
+                    packages = crud.get_packages(
+                        db,
+                        skip=0,
+                        limit=1000,
+                        name_filter=query.name,
+                        use_regex=True
+                    )
                 
                 for pkg in packages:
                     artifact_type = getattr(pkg, 'artifact_type', 'model')
