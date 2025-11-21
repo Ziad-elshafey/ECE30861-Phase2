@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 logging.getLogger("huggingface_hub.file_download").setLevel(logging.WARNING)
 
+# Suppress verbose httpx HTTP request logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 class ModelDownloader:
     """Download models from various sources."""

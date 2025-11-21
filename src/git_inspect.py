@@ -1,5 +1,6 @@
 import os
 import shutil
+import sys
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -52,12 +53,26 @@ class GitInspector:
             
             def clone_worker():
                 try:
-                    # use smaller depth for faster cloning
-                    porcelain.clone(
-                        repo_url.url, clone_path, depth=5
-                    )  # much smaller depth for efficiency
-                    result[0] = clone_path
+                    # suppress dulwich's verbose clone output
+                    import io
+                    old_stderr = sys.stderr
+                    sys.stderr = io.StringIO()
+                    
+                    try:
+                        # use smaller depth for faster cloning
+                        porcelain.clone(
+                            repo_url.url,
+                            clone_path,
+                            depth=5,
+                            errstream=io.BytesIO()  # suppress error stream
+                        )
+                        result[0] = clone_path
+                    finally:
+                        # restore stderr
+                        sys.stderr = old_stderr
                 except Exception as e:
+                    # restore stderr before logging exception
+                    sys.stderr = old_stderr
                     exception[0] = e
             
             # start clone in separate thread
