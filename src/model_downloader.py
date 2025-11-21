@@ -6,6 +6,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Suppress verbose HuggingFace Hub logs (downloading/copying/indexing messages)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub.file_download").setLevel(logging.WARNING)
+
 
 class ModelDownloader:
     """Download models from various sources."""

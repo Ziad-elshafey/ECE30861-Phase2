@@ -566,12 +566,18 @@ def create_app() -> FastAPI:
             List of matching artifact metadata
         """
         from src.database.models import Package
+        logger.info(f"📋 POST /artifacts: Processing {len(queries)} query(ies)")
+        for i, q in enumerate(queries, 1):
+            logger.info(f"   Query {i}: name='{q.name}', types={q.types}")
+        
         results = []
         
         for query in queries:
             if query.name == "*":
                 # List all artifacts
+                logger.info("   🔍 Wildcard query: listing all artifacts")
                 packages = crud.get_packages(db, skip=0, limit=1000)
+                logger.info(f"   ✓ Found {len(packages)} total artifact(s)")
                 for pkg in packages:
                     artifact_type = getattr(pkg, 'artifact_type', 'model')
                     results.append(
@@ -583,21 +589,30 @@ def create_app() -> FastAPI:
                     )
             else:
                 # Try exact match first so we do not return substring hits
+                logger.info(f"   🔍 Searching for exact match: '{query.name}'")
                 packages = (
                     db.query(Package)
                     .filter(Package.name == query.name)
                     .all()
                 )
                 
-                # Fall back to regex/pattern search only if we did not
-                # find any exact matches so legacy behavior still works.
-                if not packages:
+                if packages:
+                    logger.info(
+                        f"   ✓ Exact match: {len(packages)} package(s)"
+                    )
+                else:
+                    # Fall back to regex/pattern search only if we did not
+                    # find any exact matches so legacy behavior still works.
+                    logger.info("   ⚠ No exact match, trying regex...")
                     packages = crud.get_packages(
                         db,
                         skip=0,
                         limit=1000,
                         name_filter=query.name,
                         use_regex=True
+                    )
+                    logger.info(
+                        f"   ✓ Regex: {len(packages)} package(s)"
                     )
                 
                 for pkg in packages:
@@ -613,6 +628,9 @@ def create_app() -> FastAPI:
                         )
                     )
         
+        logger.info(
+            f"📦 POST /artifacts: Returning {len(results)} total"
+        )
         return results
     
     # Regex search endpoint (OpenAPI spec - BASELINE)
@@ -645,6 +663,7 @@ def create_app() -> FastAPI:
             HTTPException 400: Invalid regex pattern
             HTTPException 404: No artifacts found
         """
+        logger.info(f"🔍 POST /artifact/byRegEx: pattern='{regex_query.regex}'")
         try:
             # Search packages using regex
             packages = crud.get_packages(
@@ -655,7 +674,10 @@ def create_app() -> FastAPI:
                 use_regex=True
             )
             
+            logger.info(f"   Found {len(packages)} package(s) matching regex")
+            
             if not packages:
+                logger.warning("   ⚠ No artifacts found")
                 raise HTTPException(
                     status_code=404,
                     detail="No artifact found under this regex."
@@ -672,11 +694,13 @@ def create_app() -> FastAPI:
                     )
                 )
             
+            logger.info(f"✓ POST /artifact/byRegEx: Returning {len(results)}")
             return results
             
         except HTTPException:
             raise
         except Exception as e:
+            logger.error(f"❌ POST /artifact/byRegEx: Invalid pattern - {e}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid regex pattern: {str(e)}"
@@ -719,7 +743,9 @@ def create_app() -> FastAPI:
         import uuid
         
         # Log autograder request
-        logger.info(f"🔵 AUTOGRADER INGEST: type={artifact_type}, url={artifact_data.url}")
+        logger.info(
+            f"📥 POST /artifact/{artifact_type}: url={artifact_data.url}"
+        )
         
         # Parse artifact name from URL
         url = artifact_data.url
@@ -1083,8 +1109,8 @@ def create_app() -> FastAPI:
         """
         from fastapi import HTTPException, Header
         
-        # Log autograder query
-        logger.info(f"🔍 AUTOGRADER QUERY byName: '{name}'")
+        # Log query
+        logger.info(f"🔍 GET /artifact/byName/{name}")
         
         # Note: OpenAPI spec says X-Authorization is required,
         # but we handle it optionally for testing purposes
@@ -1092,10 +1118,10 @@ def create_app() -> FastAPI:
         # Search for packages with this exact name
         packages = db.query(Package).filter(Package.name == name).all()
         
-        logger.info(f"   Found {len(packages)} package(s) matching '{name}'")
+        logger.info(f"   Found {len(packages)} package(s) with name '{name}'")
         
         if not packages:
-            logger.warning(f"❌ NOT FOUND: No artifact with name '{name}'")
+            logger.warning("   ⚠ No artifact found")
             raise HTTPException(
                 status_code=404,
                 detail=f"No artifact found with name: {name}"
@@ -1112,11 +1138,8 @@ def create_app() -> FastAPI:
                     type=artifact_type
                 )
             )
-            logger.info(
-                f"   → Returning: id={pkg.id}, name={pkg.name}, "
-                f"type={artifact_type}"
-            )
         
+        logger.info(f"✓ GET /artifact/byName: Returning {len(results)}")
         return results
     
     # Get artifact by type and ID endpoint (BASELINE)
@@ -1154,15 +1177,15 @@ def create_app() -> FastAPI:
         """
         from fastapi import HTTPException
         
-        # Log autograder query
-        logger.info(f"🔍 AUTOGRADER QUERY byId: type={artifact_type}, id={id}")
+        # Log query
+        logger.info(f"🔍 GET /artifacts/{artifact_type}/{id}")
         
         # Note: OpenAPI spec says X-Authorization is required,
         # but we handle it optionally for testing purposes
         
         # Validate artifact type
         if artifact_type not in ["model", "dataset", "code"]:
-            logger.warning(f"❌ INVALID TYPE: {artifact_type}")
+            logger.warning(f"   ⚠ Invalid type: {artifact_type}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid artifact type: {artifact_type}"
@@ -1215,7 +1238,7 @@ def create_app() -> FastAPI:
         return Artifact(
             metadata=ArtifactMetadata(
                 name=package.name,
-                id=str(package.id),
+                id=package.id,
                 type=pkg_artifact_type
             ),
             data=ArtifactData(

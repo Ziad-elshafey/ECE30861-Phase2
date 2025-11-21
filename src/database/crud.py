@@ -224,13 +224,13 @@ def list_packages(
     if name_filter:
         if use_regex:
             # Use regex pattern matching on both name and README content
-            # For SQLite, we need to use the regexp function
+            # PostgreSQL uses ~ operator, SQLite uses REGEXP
             # Search in name OR readme_content
             from sqlalchemy import or_
             query = query.filter(
                 or_(
-                    Package.name.op('REGEXP')(name_filter),
-                    Package.readme_content.op('REGEXP')(name_filter)
+                    Package.name.op('~')(name_filter),
+                    Package.readme_content.op('~')(name_filter)
                 )
             )
         else:
